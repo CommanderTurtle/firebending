@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.shel.sh/schemas/vision-observation-v1.json",
+  "title": "Vision Observation",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "source",
+    "captured_at",
+    "coordinate_space",
+    "viewport",
+    "elements"
+  ],
+  "properties": {
+    "schema_version": { "const": "vision-observation/1" },
+    "source": { "type": "string", "minLength": 1 },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "coordinate_space": {
+      "type": "string",
+      "enum": ["css-viewport", "physical-screen", "normalized-999"]
+    },
+    "viewport": {
+      "type": "object",
+      "required": ["width", "height"],
+      "properties": {
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "device_pixel_ratio": { "type": "number", "exclusiveMinimum": 0 },
+        "scroll_x": { "type": "number" },
+        "scroll_y": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+    "elements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "role", "bbox", "source"],
+        "properties": {
+          "id": { "type": ["integer", "string"] },
+          "role": { "type": "string" },
+          "name": { "type": "string" },
+          "bbox": {
+            "type": "object",
+            "required": ["x", "y", "width", "height"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "width": { "type": "number", "minimum": 0 },
+              "height": { "type": "number", "minimum": 0 },
+              "x2": { "type": "number" },
+              "y2": { "type": "number" }
+            },
+            "additionalProperties": false
+          },
+          "bbox_normalized": {
+            "type": "object",
+            "required": ["x1", "y1", "x2", "y2"],
+            "properties": {
+              "x1": { "type": "integer", "minimum": 0, "maximum": 999 },
+              "y1": { "type": "integer", "minimum": 0, "maximum": 999 },
+              "x2": { "type": "integer", "minimum": 0, "maximum": 999 },
+              "y2": { "type": "integer", "minimum": 0, "maximum": 999 }
+            },
+            "additionalProperties": false
+          },
+          "state": { "type": "object" },
+          "source": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "screen_tag": { "type": "string" }
+  },
+  "additionalProperties": true
+}
