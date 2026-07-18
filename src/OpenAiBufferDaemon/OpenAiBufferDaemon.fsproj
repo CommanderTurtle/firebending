@@ -9,4 +9,11 @@
   <ItemGroup>
     <Compile Include="Program.fs" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\contracts\vision-observation.schema.json"
+             Link="contracts\vision-observation.schema.json"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
