@@ -1,0 +1,66 @@
+{
+  "instanceId": "{{INSTANCE_ID}}",
+  "server": {
+    "name": "ask-larger-model-{{INSTANCE_ID}}",
+    "version": "1.1.0"
+  },
+  "daemon": {
+    "baseUrl": "http://127.0.0.1:5087",
+    "expectedMacro": "larger-model.scht",
+    "requestTimeoutSeconds": 30,
+    "endpoints": {
+      "health": "/health",
+      "zuko": "/v1/zuko"
+    }
+  },
+  "ask": {
+    "toolName": "ask_larger_model",
+    "description": "Send one carefully prepared request to the configured Zuko larger-model workflow. Before calling, independently confirm: Are you sure your search is correct? Run now? A confirmed call consumes the hard cooldown even if the downstream request fails.",
+    "confirmationPrompt": "Are you sure your search is correct? Run now?",
+    "searchStartedMessage": "search has begun"
+  },
+  "cooldownSeconds": 120,
+  "stateFile": ".ask-larger-model-state-{{INSTANCE_ID}}.json",
+  "shell": {
+    "kind": "powershell",
+    "program": "powershell",
+    "arguments": [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand"
+    ],
+    "workingDirectory": "",
+    "timeoutSeconds": 30,
+    "maxOutputCharacters": 120000
+  },
+  "unavailableMessage": "this tool is unavailable at the moment",
+
+  "features": {
+    // Uncomment this block when the external daemon's /v1/macro is already set to "off".
+    // It changes only the success message; this MCP never configures the daemon.
+    // "offMode": {
+    //   "savedMessage": "saved to temp file",
+    //   "recoveryHint": "call at any time with 'recover'"
+    // },
+
+    // Uncomment to install the optional RGD1 completion-check tool.
+    // "check": {
+    //   "toolName": "check_larger_model",
+    //   "description": "Check whether the daemon-owned RGD1 command changed after the larger-model request. If changed, run that rgd command once and return its output.",
+    //   "rgd1StateFile": "%USERPROFILE%\\Desktop\\openai-buffer-daemon-rgd1.txt",
+    //   "waitingMessage": "the larger-model result is not ready; RGD1 has not changed",
+    //   "readyMessage": "the larger-model result is ready"
+    // },
+
+    // Uncomment to install the optional recover tool.
+    // RGD2 should already contain a command such as:
+    // rgd rg %TEMP%\\tempreg.txt i1z1
+    // "recover": {
+    //   "toolName": "recover",
+    //   "description": "Recover the most recently saved Zuko text by running the externally preconfigured RGD2 command and returning its output.",
+    //   "rgd2StateFile": "%USERPROFILE%\\Desktop\\openai-buffer-daemon-rgd2.txt",
+    //   "readyMessage": "recovered the last saved temp file"
+    // }
+  }
+}
