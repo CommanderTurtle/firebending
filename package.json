@@ -1,0 +1,20 @@
+{
+  "name": "ask-larger-model-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimal confirmed and rate-limited Zuko handoff MCP server.",
+  "scripts": {
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "engines": {
+    "bun": ">=1.2.0"
+  }
+}

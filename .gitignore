@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.ask-larger-model-state.json
+*.log
