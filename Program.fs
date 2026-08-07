@@ -678,18 +678,25 @@ module Zuko =
                             do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_convert_failed" error
                         | Ok zonePair ->
                             Files.writeText tempregPath (makeRegistry markdown zonePair)
-
-                            match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
-                            | Ok(status, responseText) ->
+                            if macro.Equals("off", StringComparison.OrdinalIgnoreCase) then
                                 do! Responses.writeJson ctx StatusCodes.Status200OK
                                     {| ok = true
                                        macro = macro
                                        tempreg_file = tempregPath
                                        zone = "index:1:zone:1"
-                                       tasket_status = status
-                                       tasket_response = responseText |}
-                            | Error error ->
-                                do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
+                                       tasket_skipped = true |}
+                            else
+                                match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
+                                | Ok(status, responseText) ->
+                                    do! Responses.writeJson ctx StatusCodes.Status200OK
+                                        {| ok = true
+                                           macro = macro
+                                           tempreg_file = tempregPath
+                                           zone = "index:1:zone:1"
+                                           tasket_status = status
+                                           tasket_response = responseText |}
+                                | Error error ->
+                                    do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
         } :> Task
 
     let handleIroh tasketRunUrl (ctx: HttpContext) =
@@ -735,8 +742,7 @@ module Zuko =
                                         do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_convert_failed" error
                                     | Ok zonePair ->
                                         Files.writeText tempregPath (makeRegistry markdown zonePair)
-                                        match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
-                                        | Ok(status, responseText) ->
+                                        if macro.Equals("off", StringComparison.OrdinalIgnoreCase) then
                                             do! Responses.writeJson ctx StatusCodes.Status200OK
                                                 {| ok = true
                                                    slot = selected
@@ -744,10 +750,21 @@ module Zuko =
                                                    macro = macro
                                                    tempreg_file = tempregPath
                                                    zone = "index:1:zone:1"
-                                                   tasket_status = status
-                                                   tasket_response = responseText |}
-                                        | Error error ->
-                                            do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
+                                                   tasket_skipped = true |}
+                                        else
+                                            match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
+                                            | Ok(status, responseText) ->
+                                                do! Responses.writeJson ctx StatusCodes.Status200OK
+                                                    {| ok = true
+                                                       slot = selected
+                                                       command = command
+                                                       macro = macro
+                                                       tempreg_file = tempregPath
+                                                       zone = "index:1:zone:1"
+                                                       tasket_status = status
+                                                       tasket_response = responseText |}
+                                            | Error error ->
+                                                do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
         } :> Task
 
 module Vision =

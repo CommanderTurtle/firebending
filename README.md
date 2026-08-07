@@ -107,13 +107,40 @@ POST /detokenize                  logged stub
 POST /rerank                      logged stub
 ```
 
-## Zuko Macro Bridge
+## Macro, Zuko, and Iroh
+
+These routes share one replaceable Regedited output file:
+
+```text
+%TEMP%\tempreg.txt
+```
+
+Every Zuko or Iroh call rewrites that file as a canonical one-index Regedited document. Its submitted or captured multiline text is available as:
+
+```powershell
+rgd load $env:TEMP\tempreg.txt
+rgd rg i1z1 --clip
+```
+
+### Select a Tasket macro
 
 Set the Tasket macro pointer with a literal filename. Posting another filename replaces it persistently:
 
 ```powershell
 Invoke-RestMethod 'http://127.0.0.1:5087/v1/macro' -Method Post -ContentType 'text/plain' -Body 'something.scht'
 ```
+
+After Zuko or Iroh writes `tempreg.txt`, the daemon posts this saved filename to Tasket at `http://127.0.0.1:7777/run`.
+
+To generate `tempreg.txt` without invoking Tasket, persist the literal value `off`:
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:5087/v1/macro' -Method Post -ContentType 'text/plain' -Body 'off'
+```
+
+`off` affects only the final Tasket dispatch. Zuko and Iroh still perform their normal Regedited conversion and replace `%TEMP%\tempreg.txt`.
+
+### Send text through Zuko
 
 Send plain multiline Markdown to Zuko:
 
@@ -126,9 +153,9 @@ Keep this multiline body exactly as written.
 Invoke-RestMethod 'http://127.0.0.1:5087/v1/zuko' -Method Post -ContentType 'text/plain' -Body $text
 ```
 
-Zuko replaces `%TEMP%\tempreg.txt` with a one-index Regedited document whose payload is `i1z1`, then posts the saved macro filename to Tasket at `http://127.0.0.1:7777/run`. JSON strings and JSON objects containing `content`, `text`, or `markdown` are accepted as well.
+Zuko preserves the multiline Markdown apart from newline normalization. A JSON string or a JSON object containing `content`, `text`, or `markdown` is accepted as well.
 
-## Iroh Regedited Bridge
+### Configure Iroh commands
 
 Each numbered endpoint persistently stores one literal shell command beginning with `rgd`:
 
@@ -136,11 +163,17 @@ Each numbered endpoint persistently stores one literal shell command beginning w
 Invoke-RestMethod 'http://127.0.0.1:5087/v1/rgd1' -Method Post -ContentType 'text/plain' -Body 'rgd rg C:\path\to\registry.txt i4z2 --clip'
 ```
 
+Use `/v1/rgd2`, `/v1/rgd3`, `/v1/rgd4`, and `/v1/rgd5` identically. Posting a new command to a slot replaces only that slot. Commands may use any native Regedited operation, but the stored text must begin with `rgd`.
+
+### Run an Iroh slot
+
 Posting its number to Iroh runs that saved command, reads the current clipboard, replaces `%TEMP%\tempreg.txt` with the clipboard as `i1z1`, and invokes the macro currently designated by `/v1/macro`:
 
 ```powershell
 Invoke-RestMethod 'http://127.0.0.1:5087/v1/iroh' -Method Post -ContentType 'text/plain' -Body '1'
 ```
+
+Iroh accepts only the literal selector `1`, `2`, `3`, `4`, or `5`. The selected command is run first; the clipboard content present afterward becomes the complete `i1z1` payload. With `/v1/macro` set to `off`, the same file is produced and Tasket is skipped.
 
 ## Streaming
 
