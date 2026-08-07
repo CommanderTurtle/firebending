@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.ask-larger-model-state.json
+.ask-larger-model-state-*.json
+config.jsonc
+configs/*.jsonc
+*.log
