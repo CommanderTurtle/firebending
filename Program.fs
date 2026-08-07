@@ -134,6 +134,9 @@ module Files =
     let ensureDataDirectory() =
         Directory.CreateDirectory(dataDirectory) |> ignore
 
+    let rgdCommandPath slot =
+        Path.Combine(dataDirectory, $"openai-buffer-daemon-rgd{slot}.txt")
+
     let writeText (path: string) (text: string) =
         lock fileLock (fun () ->
             ensureDataDirectory()
@@ -540,6 +543,83 @@ module Zuko =
         else
             None
 
+    let private readRgdCommand slot =
+        let path = Files.rgdCommandPath slot
+        if File.Exists(path) then
+            File.ReadAllText(path, Encoding.UTF8).Trim() |> Some
+        else
+            None
+
+    let private isRgdCommand (command: string) =
+        command.Equals("rgd", StringComparison.OrdinalIgnoreCase)
+        || (command.Length > 3
+            && command.StartsWith("rgd", StringComparison.OrdinalIgnoreCase)
+            && Char.IsWhiteSpace(command[3]))
+
+    let private runRgdAndReadClipboard command cancellationToken =
+        task {
+            try
+                let script =
+                    "$ErrorActionPreference = 'Continue'" + Environment.NewLine
+                    + "& { " + command + " } | Out-Null" + Environment.NewLine
+                    + "Get-Clipboard -Raw"
+
+                let encoded =
+                    script
+                    |> Encoding.Unicode.GetBytes
+                    |> Convert.ToBase64String
+
+                let startInfo = ProcessStartInfo()
+                startInfo.FileName <- "powershell"
+                startInfo.ArgumentList.Add("-NoLogo")
+                startInfo.ArgumentList.Add("-NoProfile")
+                startInfo.ArgumentList.Add("-NonInteractive")
+                startInfo.ArgumentList.Add("-EncodedCommand")
+                startInfo.ArgumentList.Add(encoded)
+                startInfo.RedirectStandardOutput <- true
+                startInfo.RedirectStandardError <- true
+                startInfo.UseShellExecute <- false
+                startInfo.CreateNoWindow <- true
+
+                use process = new Process()
+                process.StartInfo <- startInfo
+                if not (process.Start()) then
+                    return Error "PowerShell did not start."
+                else
+                    let outputTask = process.StandardOutput.ReadToEndAsync()
+                    let errorTask = process.StandardError.ReadToEndAsync()
+                    do! process.WaitForExitAsync(cancellationToken)
+                    let! clipboard = outputTask
+                    let! error = errorTask
+                    if process.ExitCode <> 0 then
+                        return Error $"Stored rgd command failed: {error.Trim()}"
+                    else
+                        return Ok clipboard
+            with ex ->
+                return Error $"Stored rgd command failed: {ex.Message}"
+        }
+
+    let private invokeTasket tasketRunUrl macro cancellationToken =
+        task {
+            let tasketBody =
+                Json.serializeCompact
+                    {| task = macro
+                       delay = 1
+                       loop = 1 |}
+
+            use content = new StringContent(tasketBody, Encoding.UTF8, "application/json")
+            try
+                let! tasketResult = tasketClient.PostAsync(tasketRunUrl, content, cancellationToken)
+                use response = tasketResult
+                let! responseText = response.Content.ReadAsStringAsync(cancellationToken)
+                if response.IsSuccessStatusCode then
+                    return Ok(int response.StatusCode, responseText)
+                else
+                    return Error $"Tasket returned HTTP {int response.StatusCode}: {responseText}"
+            with ex ->
+                return Error ex.Message
+        }
+
     let handleMacro (ctx: HttpContext) =
         task {
             match! readTextBody ctx with
@@ -555,6 +635,25 @@ module Zuko =
                         {| ok = true
                            macro = macro
                            state_file = Files.macroPointerPath |}
+        } :> Task
+
+    let handleRgd slot (ctx: HttpContext) =
+        task {
+            match! readTextBody ctx with
+            | Error error ->
+                do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_rgd_command" error
+            | Ok value ->
+                let command = value.Trim()
+                if not (isRgdCommand command) then
+                    do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_rgd_command" "Stored command must begin with rgd."
+                else
+                    let path = Files.rgdCommandPath slot
+                    Files.writeText path (command + Environment.NewLine)
+                    do! Responses.writeJson ctx StatusCodes.Status200OK
+                        {| ok = true
+                           slot = slot
+                           command = command
+                           state_file = path |}
         } :> Task
 
     let handleZuko tasketRunUrl (ctx: HttpContext) =
@@ -580,29 +679,75 @@ module Zuko =
                         | Ok zonePair ->
                             Files.writeText tempregPath (makeRegistry markdown zonePair)
 
-                            let tasketBody =
-                                Json.serializeCompact
-                                    {| task = macro
-                                       delay = 1
-                                       loop = 1 |}
+                            match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
+                            | Ok(status, responseText) ->
+                                do! Responses.writeJson ctx StatusCodes.Status200OK
+                                    {| ok = true
+                                       macro = macro
+                                       tempreg_file = tempregPath
+                                       zone = "index:1:zone:1"
+                                       tasket_status = status
+                                       tasket_response = responseText |}
+                            | Error error ->
+                                do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
+        } :> Task
 
-                            use content = new StringContent(tasketBody, Encoding.UTF8, "application/json")
-                            try
-                                let! tasketResult = tasketClient.PostAsync(tasketRunUrl, content, ctx.RequestAborted)
-                                use response = tasketResult
-                                let! responseText = response.Content.ReadAsStringAsync(ctx.RequestAborted)
-                                if response.IsSuccessStatusCode then
-                                    do! Responses.writeJson ctx StatusCodes.Status200OK
-                                        {| ok = true
-                                           macro = macro
-                                           tempreg_file = tempregPath
-                                           zone = "index:1:zone:1"
-                                           tasket_status = int response.StatusCode
-                                           tasket_response = responseText |}
+    let handleIroh tasketRunUrl (ctx: HttpContext) =
+        task {
+            match readMacro() with
+            | None ->
+                do! Responses.writeError ctx StatusCodes.Status409Conflict "macro_not_set" "Set /v1/macro before calling /v1/iroh."
+            | Some macro ->
+                match! readTextBody ctx with
+                | Error error ->
+                    do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_iroh_slot" error
+                | Ok value ->
+                    let slot =
+                        match normalizeLiteral value with
+                        | "1" -> Some 1
+                        | "2" -> Some 2
+                        | "3" -> Some 3
+                        | "4" -> Some 4
+                        | "5" -> Some 5
+                        | _ -> None
+
+                    match slot with
+                    | None ->
+                        do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_iroh_slot" "Iroh accepts only 1, 2, 3, 4, or 5."
+                    | Some selected ->
+                        match readRgdCommand selected with
+                        | None ->
+                            do! Responses.writeError ctx StatusCodes.Status409Conflict "rgd_command_not_set" $"Set /v1/rgd{selected} before calling this Iroh slot."
+                        | Some command ->
+                            match! runRgdAndReadClipboard command ctx.RequestAborted with
+                            | Error error ->
+                                do! Responses.writeError ctx StatusCodes.Status500InternalServerError "rgd_command_failed" error
+                            | Ok clipboard ->
+                                let markdown = normalizeMarkdown clipboard
+                                if String.IsNullOrWhiteSpace(markdown) then
+                                    do! Responses.writeError ctx StatusCodes.Status400BadRequest "empty_clipboard" "The current clipboard is empty."
                                 else
-                                    do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" $"Tasket returned HTTP {int response.StatusCode}: {responseText}"
-                            with ex ->
-                                do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_unreachable" ex.Message
+                                    let lineCount = markdown.Split('\n').Length
+                                    let zoneStart = 8
+                                    let zoneEnd = zoneStart + lineCount - 1
+                                    match! convertZone zoneStart zoneEnd ctx.RequestAborted with
+                                    | Error error ->
+                                        do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_convert_failed" error
+                                    | Ok zonePair ->
+                                        Files.writeText tempregPath (makeRegistry markdown zonePair)
+                                        match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
+                                        | Ok(status, responseText) ->
+                                            do! Responses.writeJson ctx StatusCodes.Status200OK
+                                                {| ok = true
+                                                   slot = selected
+                                                   command = command
+                                                   macro = macro
+                                                   tempreg_file = tempregPath
+                                                   zone = "index:1:zone:1"
+                                                   tasket_status = status
+                                                   tasket_response = responseText |}
+                                        | Error error ->
+                                            do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
         } :> Task
 
 module Vision =
@@ -823,7 +968,15 @@ module Program =
 
         app.MapPost("/v1/macro", RequestDelegate(Zuko.handleMacro)) |> ignore
 
+        app.MapPost("/v1/rgd1", RequestDelegate(Zuko.handleRgd 1)) |> ignore
+        app.MapPost("/v1/rgd2", RequestDelegate(Zuko.handleRgd 2)) |> ignore
+        app.MapPost("/v1/rgd3", RequestDelegate(Zuko.handleRgd 3)) |> ignore
+        app.MapPost("/v1/rgd4", RequestDelegate(Zuko.handleRgd 4)) |> ignore
+        app.MapPost("/v1/rgd5", RequestDelegate(Zuko.handleRgd 5)) |> ignore
+
         app.MapPost("/v1/zuko", RequestDelegate(Zuko.handleZuko tasketRunUrl)) |> ignore
+
+        app.MapPost("/v1/iroh", RequestDelegate(Zuko.handleIroh tasketRunUrl)) |> ignore
 
         app.MapPost("/v1/vision/observations", RequestDelegate(Vision.handleObservation)) |> ignore
 
@@ -861,6 +1014,7 @@ module Program =
         Console.WriteLine($"  Buffer endpoint: {url}/v1/buffer")
         Console.WriteLine($"  Macro endpoint: {url}/v1/macro")
         Console.WriteLine($"  Zuko endpoint: {url}/v1/zuko")
+        Console.WriteLine($"  Iroh endpoint: {url}/v1/iroh")
         Console.WriteLine($"  Latest request: {Files.latestRequestPath}")
         Console.WriteLine($"  Request log: {Files.requestLogPath}")
         Console.WriteLine($"  Latest buffer: {Files.latestBufferPath}")

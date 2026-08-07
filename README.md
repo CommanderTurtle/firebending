@@ -90,7 +90,9 @@ GET  /v1/pending
 GET  /v1/requests/latest
 POST /v1/buffer
 POST /v1/macro                    replace the saved Tasket .scht pointer
+POST /v1/rgd1 ... /v1/rgd5        replace one saved rgd command
 POST /v1/zuko                     write %TEMP%\tempreg.txt, then call Tasket
+POST /v1/iroh                     run one saved rgd command, wrap clipboard, call Tasket
 POST /v1/chat/completions
 GET  /v1/vision/observations
 GET  /v1/vision/observations/latest
@@ -125,6 +127,20 @@ Invoke-RestMethod 'http://127.0.0.1:5087/v1/zuko' -Method Post -ContentType 'tex
 ```
 
 Zuko replaces `%TEMP%\tempreg.txt` with a one-index Regedited document whose payload is `i1z1`, then posts the saved macro filename to Tasket at `http://127.0.0.1:7777/run`. JSON strings and JSON objects containing `content`, `text`, or `markdown` are accepted as well.
+
+## Iroh Regedited Bridge
+
+Each numbered endpoint persistently stores one literal shell command beginning with `rgd`:
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:5087/v1/rgd1' -Method Post -ContentType 'text/plain' -Body 'rgd rg C:\path\to\registry.txt i4z2 --clip'
+```
+
+Posting its number to Iroh runs that saved command, reads the current clipboard, replaces `%TEMP%\tempreg.txt` with the clipboard as `i1z1`, and invokes the macro currently designated by `/v1/macro`:
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:5087/v1/iroh' -Method Post -ContentType 'text/plain' -Body '1'
+```
 
 ## Streaming
 
