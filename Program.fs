@@ -2,7 +2,9 @@ namespace OpenAiBufferDaemon
 
 open System
 open System.Collections.Concurrent
+open System.Diagnostics
 open System.IO
+open System.Net.Http
 open System.Text
 open System.Text.Json
 open System.Text.Json.Serialization
@@ -108,6 +110,7 @@ module Files =
     let mutable observationLogPath = Path.Combine(dataDirectory, "openai-buffer-daemon-vision-observations.jsonl")
     let mutable latestObservationPath = Path.Combine(dataDirectory, "openai-buffer-daemon-latest-vision-observation.json")
     let mutable latestObservationTextPath = Path.Combine(dataDirectory, "openai-buffer-daemon-latest-vision-observation.txt")
+    let mutable macroPointerPath = Path.Combine(dataDirectory, "openai-buffer-daemon-macro.txt")
 
     let private fileLock = obj()
     let utf8NoBom = UTF8Encoding(false)
@@ -125,6 +128,7 @@ module Files =
         observationLogPath <- Path.Combine(dataDirectory, "openai-buffer-daemon-vision-observations.jsonl")
         latestObservationPath <- Path.Combine(dataDirectory, "openai-buffer-daemon-latest-vision-observation.json")
         latestObservationTextPath <- Path.Combine(dataDirectory, "openai-buffer-daemon-latest-vision-observation.txt")
+        macroPointerPath <- Path.Combine(dataDirectory, "openai-buffer-daemon-macro.txt")
         Directory.CreateDirectory(dataDirectory) |> ignore
 
     let ensureDataDirectory() =
@@ -435,6 +439,172 @@ module Daemon =
                 do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_json" error
         } :> Task
 
+module Zuko =
+    let private tasketClient = new HttpClient()
+    let private tempregPath = Path.Combine(Path.GetTempPath(), "tempreg.txt")
+
+    let private readTextBody (ctx: HttpContext) =
+        task {
+            use reader = new StreamReader(ctx.Request.Body, Encoding.UTF8)
+            let! raw = reader.ReadToEndAsync()
+            if String.IsNullOrWhiteSpace(raw) then
+                return Error "Request body is empty."
+            elif
+                not (String.IsNullOrWhiteSpace(ctx.Request.ContentType))
+                && ctx.Request.ContentType.Contains("json", StringComparison.OrdinalIgnoreCase)
+            then
+                try
+                    use doc = JsonDocument.Parse(raw)
+                    let root = doc.RootElement
+                    match root.ValueKind with
+                    | JsonValueKind.String ->
+                        return root.GetString() |> Option.ofObj |> Result.ofOption "JSON string is empty."
+                    | JsonValueKind.Object ->
+                        return
+                            Helpers.tryGetString "content" root
+                            |> Option.orElseWith (fun () -> Helpers.tryGetString "text" root)
+                            |> Option.orElseWith (fun () -> Helpers.tryGetString "markdown" root)
+                            |> Result.ofOption "JSON body requires a content, text, or markdown string."
+                    | _ ->
+                        return Error "JSON body must be a string or an object containing content, text, or markdown."
+                with ex ->
+                    return Error $"Invalid JSON: {ex.Message}"
+            else
+                return Ok raw
+        }
+
+    let private normalizeLiteral (value: string) =
+        let trimmed = value.Trim()
+        if trimmed.Length >= 2
+           && ((trimmed[0] = '"' && trimmed[trimmed.Length - 1] = '"')
+               || (trimmed[0] = '\'' && trimmed[trimmed.Length - 1] = '\'')) then
+            trimmed.Substring(1, trimmed.Length - 2).Trim()
+        else
+            trimmed
+
+    let private normalizeMarkdown (value: string) =
+        value
+            .Replace("\r\n", "\n")
+            .Replace("\r", "\n")
+            .Trim('\uFEFF', '\n')
+
+    let private convertZone startLine endLine cancellationToken =
+        task {
+            try
+                let startInfo = ProcessStartInfo()
+                startInfo.FileName <- "rgd"
+                startInfo.ArgumentList.Add("convert")
+                startInfo.ArgumentList.Add(string startLine)
+                startInfo.ArgumentList.Add(string endLine)
+                startInfo.RedirectStandardOutput <- true
+                startInfo.RedirectStandardError <- true
+                startInfo.UseShellExecute <- false
+                startInfo.CreateNoWindow <- true
+
+                use process = new Process()
+                process.StartInfo <- startInfo
+                if not (process.Start()) then
+                    return Error "rgd convert did not start."
+                else
+                    let outputTask = process.StandardOutput.ReadToEndAsync()
+                    let errorTask = process.StandardError.ReadToEndAsync()
+                    do! process.WaitForExitAsync(cancellationToken)
+                    let! output = outputTask
+                    let! error = errorTask
+                    if process.ExitCode <> 0 then
+                        return Error $"rgd convert failed: {error.Trim()}"
+                    else
+                        return Ok(output.Trim())
+            with ex ->
+                return Error $"rgd convert failed: {ex.Message}"
+        }
+
+    let private makeRegistry markdown zonePair =
+        let emptyZone = "0x0000000 : 0x0000000"
+        let header =
+            [| "regedited open"
+               "index: 1"
+               $"{zonePair} : {emptyZone} : {emptyZone}"
+               "0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0"
+               ""
+               ""
+               ""
+               "---" |]
+            |> String.concat Environment.NewLine
+
+        header + Environment.NewLine + markdown + Environment.NewLine
+
+    let private readMacro() =
+        if File.Exists(Files.macroPointerPath) then
+            File.ReadAllText(Files.macroPointerPath, Encoding.UTF8).Trim() |> Some
+        else
+            None
+
+    let handleMacro (ctx: HttpContext) =
+        task {
+            match! readTextBody ctx with
+            | Error error ->
+                do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_macro" error
+            | Ok value ->
+                let macro = normalizeLiteral value
+                if String.IsNullOrWhiteSpace(macro) then
+                    do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_macro" "Macro filename is empty."
+                else
+                    Files.writeText Files.macroPointerPath (macro + Environment.NewLine)
+                    do! Responses.writeJson ctx StatusCodes.Status200OK
+                        {| ok = true
+                           macro = macro
+                           state_file = Files.macroPointerPath |}
+        } :> Task
+
+    let handleZuko tasketRunUrl (ctx: HttpContext) =
+        task {
+            match readMacro() with
+            | None ->
+                do! Responses.writeError ctx StatusCodes.Status409Conflict "macro_not_set" "Set /v1/macro before calling /v1/zuko."
+            | Some macro ->
+                match! readTextBody ctx with
+                | Error error ->
+                    do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_zuko_text" error
+                | Ok value ->
+                    let markdown = normalizeMarkdown value
+                    if String.IsNullOrWhiteSpace(markdown) then
+                        do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_zuko_text" "Zuko text is empty."
+                    else
+                        let lineCount = markdown.Split('\n').Length
+                        let zoneStart = 8
+                        let zoneEnd = zoneStart + lineCount - 1
+                        match! convertZone zoneStart zoneEnd ctx.RequestAborted with
+                        | Error error ->
+                            do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_convert_failed" error
+                        | Ok zonePair ->
+                            Files.writeText tempregPath (makeRegistry markdown zonePair)
+
+                            let tasketBody =
+                                Json.serializeCompact
+                                    {| task = macro
+                                       delay = 1
+                                       loop = 1 |}
+
+                            use content = new StringContent(tasketBody, Encoding.UTF8, "application/json")
+                            try
+                                let! tasketResult = tasketClient.PostAsync(tasketRunUrl, content, ctx.RequestAborted)
+                                use response = tasketResult
+                                let! responseText = response.Content.ReadAsStringAsync(ctx.RequestAborted)
+                                if response.IsSuccessStatusCode then
+                                    do! Responses.writeJson ctx StatusCodes.Status200OK
+                                        {| ok = true
+                                           macro = macro
+                                           tempreg_file = tempregPath
+                                           zone = "index:1:zone:1"
+                                           tasket_status = int response.StatusCode
+                                           tasket_response = responseText |}
+                                else
+                                    do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" $"Tasket returned HTTP {int response.StatusCode}: {responseText}"
+                            with ex ->
+                                do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_unreachable" ex.Message
+        } :> Task
+
 module Vision =
     let private tryElementCount (body: JsonElement) =
         match Helpers.tryGetProperty "elements" body with
@@ -522,6 +692,11 @@ module Program =
             builder.Configuration.["Daemon:DataDirectory"]
             |> Option.ofObj
             |> Option.defaultValue Files.dataDirectory
+
+        let tasketRunUrl =
+            builder.Configuration.["Daemon:TasketRunUrl"]
+            |> Option.ofObj
+            |> Option.defaultValue "http://127.0.0.1:7777/run"
 
         Files.configure dataDirectory
 
@@ -646,6 +821,10 @@ module Program =
 
         app.MapPost("/v1/buffer", RequestDelegate(Daemon.handleBuffer)) |> ignore
 
+        app.MapPost("/v1/macro", RequestDelegate(Zuko.handleMacro)) |> ignore
+
+        app.MapPost("/v1/zuko", RequestDelegate(Zuko.handleZuko tasketRunUrl)) |> ignore
+
         app.MapPost("/v1/vision/observations", RequestDelegate(Vision.handleObservation)) |> ignore
 
         app.MapPost("/v1/chat/completions", RequestDelegate(Daemon.handleChatCompletion modelId timeoutSeconds heartbeatSeconds)) |> ignore
@@ -680,6 +859,8 @@ module Program =
         Console.WriteLine($"  Listening: {url}")
         Console.WriteLine($"  Chat endpoint: {url}/v1/chat/completions")
         Console.WriteLine($"  Buffer endpoint: {url}/v1/buffer")
+        Console.WriteLine($"  Macro endpoint: {url}/v1/macro")
+        Console.WriteLine($"  Zuko endpoint: {url}/v1/zuko")
         Console.WriteLine($"  Latest request: {Files.latestRequestPath}")
         Console.WriteLine($"  Request log: {Files.requestLogPath}")
         Console.WriteLine($"  Latest buffer: {Files.latestBufferPath}")

@@ -89,6 +89,8 @@ GET  /v1/buffer/latest
 GET  /v1/pending
 GET  /v1/requests/latest
 POST /v1/buffer
+POST /v1/macro                    replace the saved Tasket .scht pointer
+POST /v1/zuko                     write %TEMP%\tempreg.txt, then call Tasket
 POST /v1/chat/completions
 GET  /v1/vision/observations
 GET  /v1/vision/observations/latest
@@ -102,6 +104,27 @@ POST /tokenize                    logged stub
 POST /detokenize                  logged stub
 POST /rerank                      logged stub
 ```
+
+## Zuko Macro Bridge
+
+Set the Tasket macro pointer with a literal filename. Posting another filename replaces it persistently:
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:5087/v1/macro' -Method Post -ContentType 'text/plain' -Body 'something.scht'
+```
+
+Send plain multiline Markdown to Zuko:
+
+```powershell
+$text = @'
+# Work item
+
+Keep this multiline body exactly as written.
+'@
+Invoke-RestMethod 'http://127.0.0.1:5087/v1/zuko' -Method Post -ContentType 'text/plain' -Body $text
+```
+
+Zuko replaces `%TEMP%\tempreg.txt` with a one-index Regedited document whose payload is `i1z1`, then posts the saved macro filename to Tasket at `http://127.0.0.1:7777/run`. JSON strings and JSON objects containing `content`, `text`, or `markdown` are accepted as well.
 
 ## Streaming
 
