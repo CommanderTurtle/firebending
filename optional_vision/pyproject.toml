@@ -1,0 +1,43 @@
+[project]
+name = "openai-buffer-vision"
+version = "0.1.0"
+description = "Read-only desktop perception producers for OpenAI Buffer Daemon"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "AGPL-3.0-only"
+dependencies = [
+  "httpx>=0.28.1",
+  "mss>=10.1.0",
+  "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+windows = ["pywinauto>=0.6.9"]
+cv = ["opencv-python-headless>=4.10"]
+ocr = ["pytesseract>=0.3.13"]
+all = [
+  "opencv-python-headless>=4.10",
+  "pytesseract>=0.3.13",
+  "pywinauto>=0.6.9",
+]
+
+[dependency-groups]
+dev = [
+  "jsonschema[format]>=4.26",
+  "pytest>=8.3",
+  "ruff>=0.12",
+]
+
+[project.scripts]
+buffer-vision = "openai_buffer_vision.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openai_buffer_vision"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

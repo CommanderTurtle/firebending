@@ -1,111 +1,100 @@
 # OpenAI Buffer Daemon
 
-A tiny F# localhost daemon that accepts OpenAI-style `/v1/chat/completions` requests, writes every request to plaintext files on the Desktop, and waits until `/v1/buffer` receives the manual response JSON.
+A small F# localhost harness for inspecting OpenAI-compatible chat requests and fulfilling them through a manual JSON buffer. The same process accepts typed, read-only observations from browser and desktop perception producers.
 
-It is intentionally not a model. It is a harness: clients can talk to it like an OpenAI-compatible server while a person or local tool edits/inspects the latest request and posts the final answer back.
+This project is not a model server and is not affiliated with OpenAI. It preserves incoming chat JSON, exposes pending requests, and waits for a deliberate response at `/v1/buffer`.
 
-## Run
+## Architecture
 
-Requires the .NET 10 SDK/runtime on this machine.
+```mermaid
+flowchart LR
+    Client["OpenAI-compatible client"] --> Chat["F# chat and buffer daemon"]
+    Chat --> Files["Atomic latest-state files and JSONL history"]
+    Buffer["Human or local response tool"] --> Chat
+    DOM["Surfingkeys DOM producer"] --> Vision["Typed observation endpoint"]
+    Desktop["Optional Python UIA / OCR / CV"] --> Vision
+    Vision --> Files
+```
+
+The daemon is the transport boundary. Vision producers cannot click, type, or execute actions.
+
+## Requirements
+
+- .NET 10 SDK
+- `uv` and Python 3.12+ for `optional_vision`
+- Bun only when checking the Surfingkeys integration
+- Optional native Tesseract executable for OCR
+
+## Quick Start
 
 ```powershell
-cd C:\path\to\openai-buffer-daemon
-dotnet run
+git clone <repository-url>
+cd openai-buffer-daemon
+./scripts/Build.ps1
+./scripts/Start.ps1
 ```
 
-Or use the helper:
+The default base URL is `http://127.0.0.1:5087`. Runtime files default to the current user's Desktop; set a different location with `-DataDirectory`.
 
 ```powershell
-.\Start-OpenAiBufferDaemon.ps1
-.\Stop-OpenAiBufferDaemon.ps1
+./scripts/Start.ps1 -Url http://127.0.0.1:5091 -DataDirectory "$env:TEMP/openai-buffer-daemon"
 ```
 
-Default base URL:
+## Manual Chat Flow
 
-```text
-http://127.0.0.1:5087/v1
-```
-
-Override at runtime:
+Start a waiting request in one terminal:
 
 ```powershell
-$env:OPENAI_BUFFER_Daemon__Url = 'http://127.0.0.1:5091'
-$env:OPENAI_BUFFER_Daemon__RequestTimeoutSeconds = '1800'
-$env:OPENAI_BUFFER_Daemon__DataDirectory = "$env:TEMP\openai-buffer-daemon"
-dotnet run
+$body = @{ model = 'manual-buffer-model'; messages = @(@{ role = 'user'; content = 'Hello' }) } | ConvertTo-Json -Depth 20
+Invoke-RestMethod http://127.0.0.1:5087/v1/chat/completions -Method Post -ContentType application/json -Body $body
 ```
 
-## Desktop Files
-
-```text
-Desktop\openai-buffer-daemon-requests.jsonl
-Desktop\openai-buffer-daemon-latest-request.json
-Desktop\openai-buffer-daemon-latest-buffer.json
-Desktop\openai-buffer-daemon-state.json
-Desktop\openai-buffer-daemon-vision-observations.jsonl
-Desktop\openai-buffer-daemon-latest-vision-observation.json
-Desktop\openai-buffer-daemon-latest-vision-observation.txt
-```
-
-The JSONL file appends every request. The latest request file is overwritten each time so it is easy to open in Notepad++.
-Latest-state files are replaced atomically so local readers do not observe partially written JSON.
-
-## Manual Response Flow
-
-Start a request that waits:
+Fulfill it from another terminal:
 
 ```powershell
-$body = @{
-  model = 'manual-buffer-model'
-  messages = @(
-    @{ role = 'system'; content = 'You are a local manual harness.' },
-    @{ role = 'user'; content = 'Say hello from the buffer.' }
-  )
-} | ConvertTo-Json -Depth 20
-
-$job = Start-Job -ScriptBlock {
-  param($body)
-  Invoke-RestMethod 'http://127.0.0.1:5087/v1/chat/completions' -Method Post -ContentType 'application/json' -Body $body
-} -ArgumentList $body
+Invoke-RestMethod http://127.0.0.1:5087/v1/buffer -Method Post -ContentType application/json -Body '{"content":"Hello from the buffer."}'
 ```
 
-Post the response:
+`/v1/buffer` may receive a simple `content` value or a complete response containing `choices`. A `request_id` targets a particular pending request; otherwise the oldest pending request is completed.
+
+## Endpoints
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/health` | Process and queue health |
+| `GET` | `/v1/models` | Local compatibility model |
+| `POST` | `/v1/chat/completions` | Wait for a buffer response; SSE supported |
+| `GET/POST` | `/v1/buffer` | Inspect or fulfill the pending queue |
+| `GET` | `/v1/pending` | Pending request metadata |
+| `GET` | `/v1/requests/latest` | Latest untouched request |
+| `GET` | `/v1/vision/schema` | Bundled observation schema |
+| `GET/POST` | `/v1/vision/observations` | Observation status or ingestion |
+| `GET` | `/v1/vision/observations/latest` | Latest accepted observation |
+| `POST` | `/v1/macro` | Replace the persistent Tasket `.scht` pointer or set it to `off` |
+| `POST` | `/v1/rgd1` ... `/v1/rgd5` | Replace one persistent Regedited command slot |
+| `POST` | `/v1/zuko` | Convert submitted text into `%TEMP%\tempreg.txt`, then optionally call Tasket |
+| `POST` | `/v1/iroh` | Run one Regedited slot, wrap the clipboard, then optionally call Tasket |
+
+Other common `/v1` POST routes are logged compatibility stubs and return `501`; the daemon does not falsely claim those capabilities.
+
+## Optional Vision
 
 ```powershell
-Invoke-RestMethod 'http://127.0.0.1:5087/v1/buffer' -Method Post -ContentType 'application/json' -Body '{"content":"Hello from the manual buffer."}'
-Receive-Job $job -Wait -AutoRemoveJob
+uv sync --project optional_vision --extra all --group dev
+uv run --project optional_vision buffer-vision doctor
+uv run --project optional_vision buffer-vision observe --cv --output observation.json --overlay observation.png
+uv run --project optional_vision buffer-vision observe --cv --post
 ```
 
-The daemon also accepts a full OpenAI-shaped response in `/v1/buffer`. If the buffer JSON has a `choices` array, it is returned as-is.
+The preference order is DOM, UI Automation, OCR, then generic CV geometry. See [optional_vision/README.md](optional_vision/README.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Useful Endpoints
+## Test
 
-```text
-GET  /health
-GET  /v1/models
-GET  /v1/models/{model}
-GET  /v1/buffer
-GET  /v1/buffer/latest
-GET  /v1/pending
-GET  /v1/requests/latest
-POST /v1/buffer
-POST /v1/macro                    replace the saved Tasket .scht pointer
-POST /v1/rgd1 ... /v1/rgd5        replace one saved rgd command
-POST /v1/zuko                     write %TEMP%\tempreg.txt, then call Tasket
-POST /v1/iroh                     run one saved rgd command, wrap clipboard, call Tasket
-POST /v1/chat/completions
-GET  /v1/vision/observations
-GET  /v1/vision/observations/latest
-POST /v1/vision/observations
-POST /v1/completions              logged stub
-POST /v1/responses                logged stub
-POST /v1/embeddings               logged stub
-POST /v1/audio/transcriptions     logged stub
-POST /v1/audio/translations       logged stub
-POST /tokenize                    logged stub
-POST /detokenize                  logged stub
-POST /rerank                      logged stub
+```powershell
+./scripts/Test-All.ps1
 ```
+
+This builds F#, runs Python unit and schema tests, and proves the chat/buffer and observation handshakes against a temporary live daemon.
 
 ## Macro, Zuko, and Iroh
 
@@ -179,11 +168,18 @@ Iroh accepts only the literal selector `1`, `2`, `3`, `4`, or `5`. The selected 
 
 If the chat request contains `"stream": true`, the daemon returns an SSE stream. While waiting, it emits SSE comments like `: thinking 2026-...` so compatible clients keep the connection alive without receiving fake assistant text. When `/v1/buffer` receives the response, the daemon sends the final content chunk and `data: [DONE]`.
 
+## Optional MCP
+
+The configurable, independently installable MCP template lives in [optional-mcp](optional-mcp/). It can submit larger-model requests through Zuko, observe configured Regedited results, and recover the last temporary payload without becoming part of the daemon process.
+
 ## Notes
 
-- Binds to `127.0.0.1` by default.
-- No API key is required.
+- The daemon binds to `127.0.0.1` by default and requires no API key.
 - Unsupported `/v1/*` POST endpoints are logged and return a structured `501` JSON body.
 - Multimodal Chat Completions bodies are preserved exactly, including `image_url` content parts.
-- Vision producers remain separate from the daemon. See `integrations/vision` for the observation contract and Surfingkeys DOM producer.
+- Vision producers remain separate from the daemon. See [integrations/surfingkeys](integrations/surfingkeys/) for the DOM producer and [contracts/vision-observation.schema.json](contracts/vision-observation.schema.json) for the observation contract.
 - The older `PiProxyVLLM` proxy is reference material only; it is intentionally not bundled into this daemon.
+
+## License
+
+AGPL-3.0-only. See [LICENSE](LICENSE).

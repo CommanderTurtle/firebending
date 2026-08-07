@@ -13,6 +13,7 @@
   ],
   "properties": {
     "schema_version": { "const": "vision-observation/1" },
+    "request_id": { "type": "string", "minLength": 1 },
     "source": { "type": "string", "minLength": 1 },
     "captured_at": { "type": "string", "format": "date-time" },
     "coordinate_space": {
@@ -25,6 +26,9 @@
       "properties": {
         "width": { "type": "number", "exclusiveMinimum": 0 },
         "height": { "type": "number", "exclusiveMinimum": 0 },
+        "left": { "type": "number" },
+        "top": { "type": "number" },
+        "monitor": { "type": "integer", "minimum": 0 },
         "device_pixel_ratio": { "type": "number", "exclusiveMinimum": 0 },
         "scroll_x": { "type": "number" },
         "scroll_y": { "type": "number" }
@@ -70,7 +74,10 @@
         "additionalProperties": true
       }
     },
-    "screen_tag": { "type": "string" }
+    "screen_tag": { "type": "string" },
+    "window": { "type": "object" },
+    "page": { "type": "object" },
+    "metadata": { "type": "object" }
   },
   "additionalProperties": true
 }

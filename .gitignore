@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+*.py[cod]
+.vs/
+.vscode/
+artifacts/
+test-output/
+*.log
+*.pid

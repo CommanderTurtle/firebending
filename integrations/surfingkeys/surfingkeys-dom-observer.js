@@ -1,8 +1,9 @@
-(function installMacrohelpVisionObserver(api) {
+(function installBufferVisionObserver(api) {
   "use strict";
 
   const { Clipboard, Front, mapkey } = api;
-  const endpoint = "http://127.0.0.1:5087/v1/vision/observations";
+  const endpoint = globalThis.OPENAI_BUFFER_VISION_ENDPOINT ||
+    "http://127.0.0.1:5087/v1/vision/observations";
   const selector = [
     "a[href]",
     "button",
@@ -180,7 +181,7 @@
     } catch (error) {
       Clipboard.write(text);
       Front.showBanner(`Vision endpoint unavailable; copied ${observation.elements.length} elements`);
-      console.warn("Macrohelp vision observation failed", error);
+      console.warn("Buffer vision observation failed", error);
     }
   }
 
