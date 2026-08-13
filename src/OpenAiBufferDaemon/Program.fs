@@ -539,8 +539,7 @@ module Zuko =
                "0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0"
                ""
                ""
-               ""
-               "---" |]
+               "" |]
             |> String.concat Environment.NewLine
 
         header + Environment.NewLine + markdown + Environment.NewLine
@@ -679,7 +678,7 @@ module Zuko =
                         do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_zuko_text" "Zuko text is empty."
                     else
                         let lineCount = markdown.Split('\n').Length
-                        let zoneStart = 8
+                        let zoneStart = 7
                         let zoneEnd = zoneStart + lineCount - 1
                         match! convertZone zoneStart zoneEnd ctx.RequestAborted with
                         | Error error ->
@@ -743,7 +742,7 @@ module Zuko =
                                     do! Responses.writeError ctx StatusCodes.Status400BadRequest "empty_clipboard" "The current clipboard is empty."
                                 else
                                     let lineCount = markdown.Split('\n').Length
-                                    let zoneStart = 8
+                                    let zoneStart = 7
                                     let zoneEnd = zoneStart + lineCount - 1
                                     match! convertZone zoneStart zoneEnd ctx.RequestAborted with
                                     | Error error ->
