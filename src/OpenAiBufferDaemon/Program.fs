@@ -499,50 +499,61 @@ module Zuko =
             .Replace("\r", "\n")
             .Trim('\uFEFF', '\n')
 
-    let private convertZone startLine endLine cancellationToken =
-        task {
-            try
-                let startInfo = ProcessStartInfo()
-                startInfo.FileName <- "rgd"
-                startInfo.ArgumentList.Add("convert")
-                startInfo.ArgumentList.Add(string startLine)
-                startInfo.ArgumentList.Add(string endLine)
-                startInfo.RedirectStandardOutput <- true
-                startInfo.RedirectStandardError <- true
-                startInfo.UseShellExecute <- false
-                startInfo.CreateNoWindow <- true
-
-                use process = new Process()
-                process.StartInfo <- startInfo
-                if not (process.Start()) then
-                    return Error "rgd convert did not start."
-                else
-                    let outputTask = process.StandardOutput.ReadToEndAsync()
-                    let errorTask = process.StandardError.ReadToEndAsync()
-                    do! process.WaitForExitAsync(cancellationToken)
-                    let! output = outputTask
-                    let! error = errorTask
-                    if process.ExitCode <> 0 then
-                        return Error $"rgd convert failed: {error.Trim()}"
-                    else
-                        return Ok(output.Trim())
-            with ex ->
-                return Error $"rgd convert failed: {ex.Message}"
-        }
-
-    let private makeRegistry markdown zonePair =
+    let private makeBlankRegistry() =
+        // The canonical header occupies lines 0-6.  i1z1 initially addresses
+        // the blank line at 7 so `rgd rs` can own all content and range updates.
+        let blankZone = "0x0000007 : 0x0000007"
         let emptyZone = "0x0000000 : 0x0000000"
         let header =
             [| "regedited open"
                "index: 1"
-               $"{zonePair} : {emptyZone} : {emptyZone}"
+               $"{blankZone} : {emptyZone} : {emptyZone}"
                "0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0"
                ""
                ""
                "" |]
             |> String.concat Environment.NewLine
 
-        header + Environment.NewLine + markdown + Environment.NewLine
+        header + Environment.NewLine + Environment.NewLine
+
+    let private writeRegistryWithRgd (markdown: string) (cancellationToken: CancellationToken) =
+        task {
+            try
+                Files.writeText tempregPath (makeBlankRegistry())
+
+                let startInfo = ProcessStartInfo()
+                startInfo.FileName <- "rgd"
+                startInfo.ArgumentList.Add("rs")
+                startInfo.ArgumentList.Add(tempregPath)
+                startInfo.ArgumentList.Add("i1z1")
+                startInfo.RedirectStandardInput <- true
+                startInfo.RedirectStandardOutput <- true
+                startInfo.RedirectStandardError <- true
+                startInfo.UseShellExecute <- false
+                startInfo.CreateNoWindow <- true
+
+                use rgdProcess = new Process()
+                rgdProcess.StartInfo <- startInfo
+                if not (rgdProcess.Start()) then
+                    return Error "rgd rs did not start."
+                else
+                    do! rgdProcess.StandardInput.WriteAsync(markdown)
+                    rgdProcess.StandardInput.Close()
+                    let outputTask = rgdProcess.StandardOutput.ReadToEndAsync()
+                    let errorTask = rgdProcess.StandardError.ReadToEndAsync()
+                    do! rgdProcess.WaitForExitAsync(cancellationToken)
+                    let! output = outputTask
+                    let! error = errorTask
+                    if rgdProcess.ExitCode <> 0 then
+                        let details =
+                            if String.IsNullOrWhiteSpace(error) then output.Trim()
+                            else error.Trim()
+                        return Error $"rgd rs failed: {details}"
+                    else
+                        return Ok()
+            with ex ->
+                return Error $"rgd rs failed: {ex.Message}"
+        }
 
     let private readMacro() =
         if File.Exists(Files.macroPointerPath) then
@@ -677,14 +688,10 @@ module Zuko =
                     if String.IsNullOrWhiteSpace(markdown) then
                         do! Responses.writeError ctx StatusCodes.Status400BadRequest "invalid_zuko_text" "Zuko text is empty."
                     else
-                        let lineCount = markdown.Split('\n').Length
-                        let zoneStart = 7
-                        let zoneEnd = zoneStart + lineCount - 1
-                        match! convertZone zoneStart zoneEnd ctx.RequestAborted with
+                        match! writeRegistryWithRgd markdown ctx.RequestAborted with
                         | Error error ->
-                            do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_convert_failed" error
-                        | Ok zonePair ->
-                            Files.writeText tempregPath (makeRegistry markdown zonePair)
+                            do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_write_failed" error
+                        | Ok() ->
                             if macro.Equals("off", StringComparison.OrdinalIgnoreCase) then
                                 do! (Responses.writeJson ctx StatusCodes.Status200OK
                                     {| ok = true
@@ -741,14 +748,10 @@ module Zuko =
                                 if String.IsNullOrWhiteSpace(markdown) then
                                     do! Responses.writeError ctx StatusCodes.Status400BadRequest "empty_clipboard" "The current clipboard is empty."
                                 else
-                                    let lineCount = markdown.Split('\n').Length
-                                    let zoneStart = 7
-                                    let zoneEnd = zoneStart + lineCount - 1
-                                    match! convertZone zoneStart zoneEnd ctx.RequestAborted with
+                                    match! writeRegistryWithRgd markdown ctx.RequestAborted with
                                     | Error error ->
-                                        do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_convert_failed" error
-                                    | Ok zonePair ->
-                                        Files.writeText tempregPath (makeRegistry markdown zonePair)
+                                        do! Responses.writeError ctx StatusCodes.Status500InternalServerError "regedited_write_failed" error
+                                    | Ok() ->
                                         if macro.Equals("off", StringComparison.OrdinalIgnoreCase) then
                                             do! (Responses.writeJson ctx StatusCodes.Status200OK
                                                 {| ok = true

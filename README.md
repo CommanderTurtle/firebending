@@ -104,7 +104,7 @@ These routes share one replaceable Regedited output file:
 %TEMP%\tempreg.txt
 ```
 
-Every Zuko or Iroh call rewrites that file as a canonical one-index Regedited document. Its submitted or captured multiline text is available as:
+Every Zuko or Iroh call creates a blank canonical one-index Regedited document, then pipes the submitted or captured multiline text through `rgd rs` as `i1z1`. Regedited owns the final zone range and any relocation bookkeeping. The resulting text is available as:
 
 ```powershell
 rgd load $env:TEMP\tempreg.txt
@@ -127,7 +127,7 @@ To generate `tempreg.txt` without invoking Tasket, persist the literal value `of
 Invoke-RestMethod 'http://127.0.0.1:5087/v1/macro' -Method Post -ContentType 'text/plain' -Body 'off'
 ```
 
-`off` affects only the final Tasket dispatch. Zuko and Iroh still perform their normal Regedited conversion and replace `%TEMP%\tempreg.txt`.
+`off` affects only the final Tasket dispatch. Zuko and Iroh still create the template, populate it through `rgd rs`, and replace `%TEMP%\tempreg.txt`.
 
 ### Send text through Zuko
 
