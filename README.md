@@ -4,7 +4,12 @@
 
 A small F# localhost harness for inspecting OpenAI-compatible chat requests and fulfilling them through a manual JSON buffer. The same process accepts typed, read-only observations from browser and desktop perception producers.
 
-This project is not a model server and is not affiliated with OpenAI. It preserves incoming chat JSON, exposes pending requests, and waits for a deliberate response at `/v1/buffer`.
+This project is a fun take on a model server. It preserves incoming chat JSON, exposes pending requests, and waits for a deliberate response at `/v1/buffer`.
+
+Dependencies:
+
+- Tasket Communication Daemon at [CommanderTurtle/macrohelp](https://github.com/CommanderTurtle/macrohelp) : Macro HTTPD
+- Dangerously greppable markdown files at [CommanderTurtle/regedited](https://github.com/CommanderTurtle/regedited) : Zone'd ripgrep sorted by index
 
 ## Architecture
 
