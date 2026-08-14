@@ -1,5 +1,7 @@
 # OpenAI Buffer Daemon
 
+![zuko](https://c.tenor.com/CGQgnIYofGQAAAAd/tenor.gif)
+
 A small F# localhost harness for inspecting OpenAI-compatible chat requests and fulfilling them through a manual JSON buffer. The same process accepts typed, read-only observations from browser and desktop perception producers.
 
 This project is not a model server and is not affiliated with OpenAI. It preserves incoming chat JSON, exposes pending requests, and waits for a deliberate response at `/v1/buffer`.
