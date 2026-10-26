@@ -92,7 +92,7 @@ Invoke-RestMethod http://127.0.0.1:5087/v1/buffer -Method Post -ContentType appl
 | `GET/POST` | `/v1/requests/{requestId}` | Privately retrieve/reply to a waiting new message |
 | `GET/POST` | `/v1/jevset` | Draft/refine a native Jev framework; `Y` activates, `N` clears draft/history/activation |
 | `POST` | `/v1/jevask` | Evaluate one text/JSON state with the activated framework |
-| `POST` | `/v1/cereal` | Serialize one image as labeled, console-safe ASCII |
+| `GET/POST` | `/v1/cereal` | Programmatic raster-to-text; `1/2/3` select 32/128/256 detail; zero inference |
 | `GET/POST` | `/v1/ocr` | One-shot OCR; `0` selects default Tesseract, `1` opts into Paddle |
 
 Other common `/v1` POST routes are logged compatibility stubs and return `501`; the daemon does not falsely claim those capabilities.

@@ -30,6 +30,13 @@ process per supplied image, independently of desktop capture or staged message
 files. See [perception setup](../docs/PERCEPTION.md) for Python selection,
 image inputs, cold-process cleanup and the `0`/`1` switch.
 
+`/v1/cereal` uses the same cold helper transport with `--operation cereal`, but
+imports no OCR backend and makes zero inference/network calls. Install just
+`uv sync --project optional_vision --extra cereal` for local raster-to-text.
+Literal `1/2/3` selects 32/128/256 detail. Raw text is returned without trimming
+any rows, columns or transparent margins; optional block/Braille alphabets and
+pixel/grid metadata are documented in [perception setup](../docs/PERCEPTION.md).
+
 ## Observe
 
 ```powershell

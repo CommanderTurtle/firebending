@@ -125,16 +125,6 @@ module Inference =
         return bytes
     }
 
-    let imageUrl (bytes: byte[]) =
-        let starts (magic: byte[]) = bytes.AsSpan().StartsWith(magic.AsSpan())
-        let mime =
-            if starts [| 137uy;80uy;78uy;71uy;13uy;10uy;26uy;10uy |] then "image/png"
-            elif starts [| 255uy;216uy;255uy |] then "image/jpeg"
-            elif starts (Encoding.ASCII.GetBytes("GIF8")) then "image/gif"
-            elif bytes.Length >= 12 && Encoding.ASCII.GetString(bytes,0,4) = "RIFF" && Encoding.ASCII.GetString(bytes,8,4) = "WEBP" then "image/webp"
-            else fail 415 "NInfer vision input must be PNG, JPEG, GIF or WebP. OCR accepts other Pillow-supported images."
-        $"data:{mime};base64,{Convert.ToBase64String(bytes)}"
-
     let origin (options: InferenceOptions) =
         let mutable uri = Unchecked.defaultof<Uri>
         if not (Uri.TryCreate(options.BaseUrl.TrimEnd('/'), UriKind.Absolute, &uri))

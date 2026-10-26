@@ -4,7 +4,6 @@ These fixtures start the built daemon when pytest is explicitly run. Importing t
 module does not start a server, subprocess, OCR engine, or inference request.
 """
 
-import base64
 import concurrent.futures
 import json
 import os
@@ -163,11 +162,12 @@ def bench(tmp_path):
     package = tmp_path / "fake-helper" / "openai_buffer_vision"
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
-    # This subprocess is a wire-protocol fake, deliberately not the actual OCR package.
+    # Protocol fake only. Renderer mathematics has separate real-code fixtures.
     (package / "oneshot.py").write_text(
         "import json, os, pathlib, sys, time\n"
         "prefix = sys.stdin.buffer.read(4)\n"
-        "engine = sys.argv[sys.argv.index('--engine') + 1]\n"
+        "operation = sys.argv[sys.argv.index('--operation') + 1] if '--operation' in sys.argv else 'ocr'\n"
+        "engine = sys.argv[sys.argv.index('--engine') + 1] if '--engine' in sys.argv else None\n"
         "if prefix == b'FAIL':\n"
         "    print('fixture missing dependency: install OCR extra', file=sys.stderr)\n"
         "    raise SystemExit(2)\n"
@@ -178,7 +178,12 @@ def bench(tmp_path):
         "raw = prefix + sys.stdin.buffer.read()\n"
         "with pathlib.Path(os.environ['OCR_FIXTURE_LOG']).open('a') as log:\n"
         "    log.write(json.dumps({'pid': os.getpid(), 'engine': engine, 'bytes': len(raw)}) + '\\n')\n"
-        "print(json.dumps({'text': 'one\\n  two', 'engine': engine}))\n",
+        "if operation == 'cereal':\n"
+        "    level = int(sys.argv[sys.argv.index('--level') + 1])\n"
+        "    style = sys.argv[sys.argv.index('--style') + 1]\n"
+        "    print(json.dumps({'text': '  /\\\\  \\n /__\\\\ \\n      \\n', 'level': level, 'style': style, 'trimmed': False}))\n"
+        "else:\n"
+        "    print(json.dumps({'text': 'one\\n  two', 'engine': engine}))\n",
         encoding="utf-8",
     )
     with socket.socket() as sock:
@@ -246,9 +251,12 @@ def activate(api, upstream, suffix):
 def test_idle_inspection_and_switches_do_not_call_model_or_load_ocr(bench):
     api, upstream, helper_log = bench
     assert api.call("/v1/ocr")[1].startswith("0: tesseract")
+    assert api.call("/v1/cereal")[1].startswith("1: 32p")
     assert api.call("/v1/jevset")[0] == 200
     for value in ("1", "0", "1"):
         assert api.call("/v1/ocr", value)[0] == 200
+    for level in ("1", "2", "3"):
+        assert api.call("/v1/cereal", level)[0] == 200
     time.sleep(0.1)
     assert upstream.snapshot() == []
     assert not helper_log.exists()
@@ -353,25 +361,57 @@ def test_clear_during_refinement_discards_late_draft(bench):
     assert api.call("/v1/jevset" + suffix, "Y")[0] == 409
 
 
-def test_cereal_repairs_unsafe_ascii_and_sends_correct_native_image_part(bench):
-    api, upstream, _ = bench
-    upstream.reply(tool("submit_cereal", "ascii", "\x1b[31munsafe"))
-    upstream.reply(tool("submit_cereal", "ascii", ART))
-    status, output, _ = api.call("/v1/cereal", PNG, {"Content-Type": "image/png"})
-    assert status == 200 and output == "```text\n" + ART + "\n```\n"
-    calls = upstream.snapshot()
-    assert len(calls) == 2
-    part = calls[0][1]["messages"][1]["content"][1]
-    assert (
-        part["image_url"]["url"]
-        == "data:image/png;base64," + base64.b64encode(PNG).decode()
+def test_cereal_is_local_raw_and_preserves_all_spaces_and_rows(bench):
+    api, upstream, helper_log = bench
+    assert api.call("/v1/cereal", "3")[0] == 200
+    status, output, headers = api.call("/v1/cereal", PNG, {"Content-Type": "image/png"})
+    assert status == 200 and output == "  /\\  \n /__\\ \n      \n"
+    assert headers.get_content_type() == "text/plain"
+    assert headers["X-Cereal-Level"] == "3"
+    assert upstream.snapshot() == []
+    record = json.loads(helper_log.read_text().splitlines()[-1])
+    assert record["engine"] is None
+    status, body, _ = api.call(
+        "/v1/cereal?level=2&style=block&format=json", PNG, {"Content-Type": "image/png"}
     )
-    assert calls[0][1]["max_tokens"] > 0
-    assert calls[0][1]["tool_choice"]["function"]["name"] == "submit_cereal"
-    for _ in range(3):
-        upstream.reply(tool("submit_cereal", "ascii", "x" * 97))
-    assert api.call("/v1/cereal", PNG, {"Content-Type": "image/png"})[0] == 502
-    assert len(upstream.snapshot()) == 5
+    assert status == 200
+    result = json.loads(body)
+    assert result["level"] == 2 and result["style"] == "block" and not result["trimmed"]
+    assert upstream.snapshot() == []
+
+
+def test_cereal_output_can_be_piped_unchanged_into_jevask(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    status, art, _ = api.call("/v1/cereal", PNG, {"Content-Type": "image/png"})
+    assert status == 200
+    assert len(upstream.snapshot()) == 1  # Only the explicit jevset draft.
+    upstream.reply(ANSWER)
+    assert api.call("/v1/jevask" + suffix, art)[0] == 200
+    assert upstream.snapshot()[-1][1]["state"] == art
+
+
+def test_cereal_is_not_gated_on_a_busy_jev_model(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    count = len(upstream.snapshot())
+    gate = threading.Event()
+    upstream.reply(ANSWER, gate=gate)
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        waiting = pool.submit(api.call, "/v1/jevask" + suffix, ART)
+        try:
+            for _ in range(100):
+                if len(upstream.snapshot()) > count:
+                    break
+                time.sleep(0.01)
+            assert len(upstream.snapshot()) > count
+            assert api.call("/v1/cereal", PNG, {"Content-Type": "image/png"})[0] == 200
+            assert len(upstream.snapshot()) == count + 1
+        finally:
+            gate.set()
+        assert waiting.result()[0] == 200
 
 
 def test_native_busy_retry_and_validated_json_return(bench):

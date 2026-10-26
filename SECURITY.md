@@ -26,9 +26,11 @@ conversation history have no artificial text truncation and use available RAM.
 `optional_vision` is read-only. It contains no input injection, shell execution, arbitrary action endpoint, or hidden automation loop.
 
 The explicit `/v1/jevset`, `/v1/jevask`, `/v1/cereal` and `/v1/ocr` routes use the
-same private loopback/exact-origin guard. Jev/cereal send supplied text/images to
-the operator-configured NInfer origin only when invoked; there is no startup or
-idle inference. They do not enter the pending queue, use `/v1/file`, or write
+same private loopback/exact-origin guard. Only explicit Jev calls send text to
+the operator-configured NInfer origin; there is no startup or idle inference.
+Cereal is local raster math: no OCR, model discovery/inference, model downloads
+or network calls. Its raw text output is not semantically filtered or rewritten
+before callers pipe it onward. These routes do not enter the pending queue, use `/v1/file`, or write
 bodies/results into request logs. Jev drafts/history/activated frameworks live in
 bounded in-memory sessions; restart clears them. OCR uses a cold subprocess with
 bounded input/output and termination cleanup, never a shell-interpolated command.
@@ -36,9 +38,11 @@ Paddle's first-use model-weight downloads/cache are separate from image inputs;
 recognized images are not uploaded to an OCR service. HTTP image URLs and Windows
 UNC/device paths are not fetched. See [limits and configuration](docs/PERCEPTION.md).
 
-Generated rubrics and ASCII remain untrusted model output. Wire validation and
-console-safe characters do not prove semantic correctness or prevent all prompt
-injection into a downstream model. No returned tool call is executed as code.
+Generated Jev rubrics remain untrusted model output. Cereal's deterministic art
+can visually represent arbitrary input, including text someone placed in an
+image; it does not recognize, obey or remove those instructions. Neither wire
+validation nor a character grid prevents prompt injection into a downstream
+model chosen by the caller. No returned tool call is executed as code.
 
 ## Reports
 

@@ -11,6 +11,7 @@ The old `Refactor.zip` was treated as research input, not merged source.
 | Tesseract OCR | Preserved as an optional adapter with a clear native dependency diagnostic |
 | Source-priority deduplication | Rewritten and unit tested |
 | Labeled overlay image | Preserved as an optional diagnostic artifact |
+| Screen-grid/spatial serialization | Referenced by Cereal's full-canvas deterministic raster/stroke/shade pipe; independent of OCR/models |
 | PyAutoGUI action loop | Excluded; perception remains read-only |
 | Rust capture/UIA/OCR/CV stubs | Excluded; they did not implement those paths |
 | Unbuildable TypeScript agent extensions | Excluded |

@@ -482,6 +482,9 @@ all = [
     { name = "pytesseract" },
     { name = "pywinauto" },
 ]
+cereal = [
+    { name = "pillow" },
+]
 cv = [
     { name = "opencv-python-headless" },
 ]
@@ -514,6 +517,7 @@ requires-dist = [
     { name = "opencv-python-headless", marker = "extra == 'all'", specifier = ">=4.10" },
     { name = "opencv-python-headless", marker = "extra == 'cv'", specifier = ">=4.10" },
     { name = "pillow", marker = "extra == 'all'", specifier = ">=11" },
+    { name = "pillow", marker = "extra == 'cereal'", specifier = ">=11" },
     { name = "pillow", marker = "extra == 'ocr'", specifier = ">=11" },
     { name = "pillow", marker = "extra == 'paddle'", specifier = ">=11" },
     { name = "pytesseract", marker = "extra == 'all'", specifier = ">=0.3.13" },
@@ -522,7 +526,7 @@ requires-dist = [
     { name = "pywinauto", marker = "extra == 'windows'", specifier = ">=0.6.9" },
     { name = "rapidocr", marker = "extra == 'paddle'", specifier = ">=3.10,<4" },
 ]
-provides-extras = ["windows", "cv", "ocr", "paddle", "all"]
+provides-extras = ["windows", "cv", "cereal", "ocr", "paddle", "all"]
 
 [package.metadata.requires-dev]
 dev = [

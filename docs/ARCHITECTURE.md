@@ -13,8 +13,11 @@ changing existing OpenAI-compatible JSON responses.
 `Inference.fs` supplies a separate on-demand NInfer client, bounded input/response
 pipes, deadlines and one shared heavy-operation lane. `Jev.fs` owns in-memory
 draft/refinement/activated frameworks and validates native SystemOne responses.
-`Perception.fs` owns ASCII serialization and the independently selected cold OCR
-helper. None of these enters the manual pending queue, consumes staged files,
+`Perception.fs` owns the raw Cereal pipe/resolution selector and independently
+selected cold OCR helper. Cereal uses local raster/stroke/shade calculations in
+`optional_vision/cereal.py`, never NInfer or an OCR model. Its full-canvas grid
+retains blank rows/columns and alpha; only Jev interprets it when explicitly
+called. None of these enters the manual pending queue, consumes staged files,
 persists request bodies, captures a screen or executes model-generated tools.
 
 `src/OpenAiBufferDaemon` owns HTTP transport, the pending request queue, atomic latest-state files, and append-only JSONL history. Chat bodies are stored as received. A buffer response either passes through as a complete `choices` response or is wrapped as a Chat Completions response.

@@ -14,6 +14,7 @@ dependencies = [
 [project.optional-dependencies]
 windows = ["pywinauto>=0.6.9"]
 cv = ["opencv-python-headless>=4.10"]
+cereal = ["Pillow>=11"]
 ocr = ["pytesseract>=0.3.13", "Pillow>=11"]
 paddle = ["rapidocr>=3.10,<4", "onnxruntime>=1.23,<2", "Pillow>=11"]
 all = [

@@ -220,7 +220,7 @@ module Program =
         app.MapMethods("/v1/jevset", [| "GET"; "POST" |], RequestDelegate(Messages.guard (Jev.set inference app.Lifetime.ApplicationStopping))) |> ignore
         app.MapPost("/v1/jevask", RequestDelegate(Messages.guard (Jev.ask inference app.Lifetime.ApplicationStopping))) |> ignore
         app.MapMethods("/v1/ocr", [| "GET"; "POST" |], RequestDelegate(Messages.guard (Perception.ocr inference app.Lifetime.ApplicationStopping))) |> ignore
-        app.MapPost("/v1/cereal", RequestDelegate(Messages.guard (Perception.cereal inference app.Lifetime.ApplicationStopping))) |> ignore
+        app.MapMethods("/v1/cereal", [| "GET"; "POST" |], RequestDelegate(Messages.guard (Perception.cereal inference app.Lifetime.ApplicationStopping))) |> ignore
         app.MapMethods("/v1/file", [| "GET"; "POST"; "DELETE" |], RequestDelegate(Messages.guard Messages.files)) |> ignore
         app.MapMethods("/v1/multichat", [| "GET"; "POST" |], RequestDelegate(Messages.guard Messages.multichat)) |> ignore
         app.MapPost("/v1/delimiter", RequestDelegate(Messages.guard Messages.delimiter)) |> ignore

@@ -9,16 +9,17 @@ loads a model at daemon startup, on a health check, or while idle.
 | `POST /v1/jevset` | Task/question, then refinements or literal `Y` / `N` | Validated native SystemOne JSON and save prompt |
 | `GET /v1/jevset` | Optional `?session=name` | Current draft, activated framework and turn count; no inference |
 | `POST /v1/jevask` | One text pipe, JSON string/object/array/null | Results, probabilities, native confidence and full native response |
-| `POST /v1/cereal` | One image | Labeled, console-safe ASCII in a multiline code block |
+| `POST /v1/cereal` | One image, or literal `1` / `2` / `3` | Local raster-to-text, or select 32/128/256 detail |
+| `GET /v1/cereal` | No body | Selected detail; no helper/model started |
 | `POST /v1/ocr` | One image, or literal `0` / `1` | Recognized text, or engine selection acknowledgement |
 | `GET /v1/ocr` | No body | Selected engine; no process/model started |
 
 ## Setup
 
-Jev and cereal use an **already running** NInfer server. Jev requires its native
-`/v1/systemone` support (`--jev`); drafting requires function tool calls, and
-cereal additionally requires a vision-capable model and its image support.
-Firebending never starts another NInfer instance. OCR does not call NInfer.
+Only Jev uses an **already running** NInfer server: native `/v1/systemone`
+support (`--jev`) for asking, function tool calls for drafting. Firebending never
+starts another NInfer instance. **Cereal is entirely programmatic: zero model
+inference, OCR, model discovery or network calls.** OCR is its own separate route.
 
 Configuration uses `appsettings.json`'s `Daemon` section or environment variables:
 
@@ -27,9 +28,15 @@ Configuration uses `appsettings.json`'s `Daemon` section or environment variable
 | `OPENAI_BUFFER_Daemon__NinferBaseUrl` | `http://127.0.0.1:8000` | HTTP(S) origin or `/v1` URL |
 | `OPENAI_BUFFER_Daemon__NinferModel` | empty | Discover the single `/v1/models` entry on demand; set explicitly if multiple |
 | `OPENAI_BUFFER_Daemon__NinferApiKey` | empty | Optional bearer credential; keep outside committed configuration |
-| `OPENAI_BUFFER_Daemon__NinferMaxTokens` | `8192` | Draft/ASCII completion limit; incomplete output is an error, never silently truncated |
+| `OPENAI_BUFFER_Daemon__NinferMaxTokens` | `8192` | Jev draft completion limit; never used by Cereal |
 | `OPENAI_BUFFER_Daemon__PerceptionTimeoutSeconds` | `120` | Whole operation deadline, including reads/retries; range 1–900 seconds |
-| `OPENAI_BUFFER_Daemon__OcrPython` | discovered venv or `python`/`python3` | Python with `openai_buffer_vision` and chosen OCR extra installed |
+| `OPENAI_BUFFER_Daemon__OcrPython` | discovered venv or `python`/`python3` | Cold image-helper Python with `openai_buffer_vision` and selected extra |
+
+For Cereal alone (Pillow + the existing NumPy dependency; no OCR engines):
+
+```sh
+uv sync --project optional_vision --extra cereal
+```
 
 For both OCR engines:
 
@@ -111,22 +118,72 @@ these numbers is calibrated real-world accuracy.
 ## Cereal: image → ASCII → Jev
 
 ```sh
+# Select detail; this only changes an integer, not an image buffer.
+curl -fsS --data-binary 1 "$base/v1/cereal"  # 32
+curl -fsS --data-binary 2 "$base/v1/cereal"  # 128
+curl -fsS --data-binary 3 "$base/v1/cereal"  # 256
+
+# Raw art on stdout, directly into a manually configured Jev framework.
 curl -fsS -H 'Content-Type: image/png' --data-binary @card.png "$base/v1/cereal" |
   curl -fsS --data-binary @- "$base/v1/jevask?session=cards"
+
+# Or copy the exact same text. Cereal does not choose/forward its destination.
+curl -fsS -H 'Content-Type: image/png' --data-binary @card.png "$base/v1/cereal" | wl-copy
 ```
 
-Cereal sends the image to the configured vision model with a required
-`submit_cereal` function. It requests visible text, labels, object structure and
-relative arrangement (for cards: rank and full suit name, not an ambiguous glyph).
-It is not a brightness-to-character filter or genuine 3D reconstruction. Fidelity
-still depends on the model; unreadable content should remain uncertain rather
-than be invented. Instructions pictured in an image are treated as content.
+On Windows, use `curl.exe` and e.g. `clip.exe` for the default ASCII output.
+The default response is **raw `text/plain`**: no labels, menu, JSON envelope,
+Markdown fence, model rewrite, guessed objects, or semantic validation/repair
+layer. One image goes in; one text image comes out. `/v1/jevask` accepts that
+text unchanged if the caller chooses to pipe it there. Cereal never supplies a
+card name or invokes Jev itself; the framework and interpretation belong to you.
 
-Art must fit 96 columns × 48 lines, using printable ASCII and LF only: no ANSI
-controls, tabs, Unicode or embedded fences. Invalid output is redrafted within
-the same three-attempt/deadline bounds, never cropped. The returned Markdown
-fence can safely pass through `jevask` as part of its state. There is no image or
-ASCII retention, automatic screen capture, action execution, or file-buffer use.
+The renderer decodes the full raster, applies EXIF orientation, and resamples in
+premultiplied-alpha space onto an aspect-correct rectangular character grid.
+There is **no trimming, cropping, background removal, autocontrast, deskew,
+denoising, auto-threshold cleanup, padding removal or content-aware reframing**.
+Every output row and column is retained, including all-space borders and trailing
+spaces. Fully transparent images return a complete blank grid, not an error.
+Hidden RGB under alpha=0 cannot contribute ink. White, black and partially
+transparent foregrounds remain distinct from completely transparent samples.
+
+ASCII cells use a fixed 6×12 sampling geometry. Each cell is matched against a
+local glyph atlas using sampled coverage, horizontal/vertical stroke derivatives
+and shade-density error. The atlas uses Pillow's bundled font plus full-cell
+geometric strokes, not system font lookup, weights, learned recognition or OCR.
+Constant-color regions use the complete ordered shade alphabet; detailed cells
+use stroke matching. Dark regions use dense symbols, light regions sparse ones;
+finite glyph density is the available grayscale resolution. RGB is projected to luminance, not ANSI
+color. Weak strokes retain a local derivative direction; source colors are not
+adaptively enhanced. This is spatial raster serialization, not reconstructed SVG
+paths or a promise of lossless text recognition.
+
+Detail levels `1/2/3` set a 32/128/256 long-edge grid budget. Terminal cells are
+2:1 tall: a square at level 3 is 256 columns × 128 rows (the visual equivalent of
+a 256×256 square), not a vertically stretched square of 256 text rows. Rectangular
+inputs keep their original aspect ratio within one-cell rounding. The selected
+level is process-wide; each request snapshots it. `?level=3` overrides one image
+without changing the default. No image, result or staged file is retained.
+
+Optional output alphabets and envelopes:
+
+```sh
+curl -fsS -H 'Content-Type: image/png' --data-binary @image.png "$base/v1/cereal?level=3&style=block"
+curl -fsS -H 'Content-Type: image/png' --data-binary @image.png "$base/v1/cereal?style=braille&format=markdown"
+curl -fsS -H 'Content-Type: image/png' --data-binary @image.png "$base/v1/cereal?format=json"
+```
+
+`style=ascii` (default) is printable 7-bit text; `block` adds shade/half-block
+characters, and `braille` maps fixed 2×4 dot patterns with ordered shade
+quantization. Neither uses terminal escape codes. `format=markdown` wraps the
+same grid in a code block; `format=json` includes its unchanged `text`, source
+dimensions, grid dimensions and pixel steps (`cereal/1`). Row `r`, column `c`
+maps to source rectangle `[c*pixel_step_x, r*pixel_step_y, (c+1)*pixel_step_x,
+(r+1)*pixel_step_y]`. There are no inserted/deleted line numbers or blank rows.
+Use a non-wrapping monospace viewer wide enough for the selected level.
+
+For the image/font API contracts, see the official [Pillow image operations](https://pillow.readthedocs.io/en/stable/reference/ImageOps.html)
+and [bundled font API](https://pillow.readthedocs.io/en/stable/reference/ImageFont.html).
 
 ## OCR selection and image inputs
 
@@ -151,33 +208,45 @@ literal local path (optional surrounding single/double quotes), a JSON string,
 `{ "path": "..." }`, or `{ "image_data_url": "data:image/png;base64,..." }`.
 Paths are opened once, never shell-evaluated or stored. HTTP URLs and Windows
 UNC/device paths are rejected. JSON/data URLs require a JSON content type;
-plaintext data URLs also work. Cereal accepts PNG/JPEG/GIF/WebP signatures;
-OCR accepts Pillow-supported images, normalizes EXIF orientation and composites
-alpha onto white before OCR. Images are limited to 20 MiB (32 MiB request
-envelope); OCR additionally limits decoded images to 16 million pixels.
+plaintext data URLs also work. Both accept formats supported by the installed
+Pillow decoder (including PNG, JPEG, WebP, GIF, BMP, TIFF, ICO and AVIF when its
+codec is present). Animated/multi-page inputs use the first frame. Both normalize
+EXIF orientation; only OCR composites alpha onto white. Cereal retains alpha
+coverage. Images are limited to 20 MiB (32 MiB request envelope) and 16 million
+decoded pixels. Literal `1/2/3` select Cereal's level; JSON `{ "path": "1" }`
+opens an image named `1` instead.
 
 ## Backpressure and failures
 
-One process-wide inference/OCR lane avoids competing heavy work. Busy requests
+One process-wide Jev/OCR lane avoids competing model work. Busy requests
 return 429 with `Retry-After: 1`, not an unbounded queue. Switches and draft Y/N
 remain immediate and do not start inference. Native busy 423/429 responses may be
 retried twice within the whole deadline; transport errors/timeouts are not blindly
 replayed. Errors are non-success HTTP responses, never fabricated classifications.
 Use `curl -f` so a pipeline does not mistake an error body for recognized content.
+Cereal is independent of that lane: a busy Jev model does not block local image
+rendering. Each Cereal operation has its own cold helper and bounded deadline.
 
 The routes share the loopback CLI/exact-same-origin guard used by the message
 routes. Request bodies/results are not copied into the legacy request log or
 message history. Only Jev draft/refinement/framework state is retained in memory.
-Images and text sent to Jev/cereal leave the daemon for the configured NInfer
-origin; choose that origin deliberately. No new desktop/input authority is added.
+Only explicit Jev calls send text to the configured NInfer origin; choose that
+origin deliberately. Cereal never sends the image/text to any model. No new
+desktop/input authority is added. Local-origin guards and bounded resource
+handling are transport protections, not an inter-endpoint content filter.
 
 ## Reference lineage
 
 The original Macrohard `heatvision` branch was inspected as historical design
-reference, including retained uploads before the tree was emptied. Its old
-entrypoint editor exposed an opt-in `useOcr` screen autofill toggle, but execution
-did not implement it. No working ASCII/Daredevil serializer was present to
-transplant. This implementation preserves the idea of opt-in perception feeding
-typed inputs without importing unfinished automation code. The existing
-observation contract stays read-only; the new ASCII pipe and native Jev
-draft/activation boundary stand on their own.
+reference. The Git branch's old entrypoint editor exposed an unimplemented
+`useOcr` toggle. The separate original `Refactor.zip` archive contains the actual
+Python ScreenTag coordinate encoders, OpenCV contour path, OCR adapters and
+image-compaction prototypes. Its spatial/typed separation is useful reference;
+its agent loop, model calls, persistent OCR and entropy/noise injection are not
+part of Cereal. Firebending's existing observation/overlay contracts also keep
+geometry separate from interpretation.
+
+`mm-tools/img2svg` supplies the related local-only, alpha-aware raster/vector
+design reference. Omarchy's `omarchy-transcode-ascii` supplies the terminal cell,
+alpha and Braille/block reference. Cereal does not adopt their optional trimming,
+background removal or fixed global threshold; it serializes the full canvas.
