@@ -262,7 +262,7 @@ def test_perception_rejects_cross_site_and_rebound_hosts(bench, path):
     assert not upstream.snapshot()
 
 
-def test_refinement_needs_y_and_n_preserves_last_activated_framework(bench):
+def test_refinement_needs_y_and_n_clears_draft_history_and_activation(bench):
     api, upstream, _ = bench
     suffix = session()
     assert api.call("/v1/jevask" + suffix, ART)[0] == 409
@@ -281,13 +281,42 @@ def test_refinement_needs_y_and_n_preserves_last_activated_framework(bench):
         "user",
     ]
     assert api.call("/v1/jevset" + suffix, "Y")[0] == 200
-    assert api.call("/v1/jevset" + suffix, "N")[0] == 200
     upstream.reply(ANSWER)
     status, output, _ = api.call("/v1/jevask" + suffix, ART)
     assert status == 200 and "ace_spades" in output and "0.875000" in output
     assert upstream.snapshot()[-1][0] == "/v1/systemone"
     assert upstream.snapshot()[-1][1]["state"] == ART
+    calls_before_clear = upstream.snapshot()
+    assert api.call("/v1/jevset" + suffix, "N")[0] == 200
+    assert api.call("/v1/jevask" + suffix, ART)[0] == 409
+    assert api.call("/v1/jevset" + suffix, "Y")[0] == 409
+    status = api.call("/v1/jevset" + suffix)[1]
+    cleared = json.loads(status.split("```json\n", 1)[1].rsplit("\n```", 1)[0])
+    assert cleared == {"draft": None, "active": None, "turns": 0}
+    assert upstream.snapshot() == calls_before_clear
     assert api.call("/v1/jevask" + session(), ART)[0] == 409
+
+
+def test_clear_during_ask_discards_stale_result(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    calls_before_ask = len(upstream.snapshot())
+    gate = threading.Event()
+    upstream.reply(ANSWER, gate=gate)
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        waiting = pool.submit(api.call, "/v1/jevask" + suffix, ART)
+        for _ in range(100):
+            if len(upstream.snapshot()) > calls_before_ask:
+                break
+            time.sleep(0.01)
+        assert len(upstream.snapshot()) > calls_before_ask
+        assert api.call("/v1/jevset" + suffix, "N")[0] == 200
+        gate.set()
+        assert waiting.result()[0] == 409
+    calls_after_clear = upstream.snapshot()
+    assert api.call("/v1/jevask" + suffix, ART)[0] == 409
+    assert upstream.snapshot() == calls_after_clear
 
 
 def test_framework_repairs_are_bounded_and_invalid_draft_is_never_saved(bench):

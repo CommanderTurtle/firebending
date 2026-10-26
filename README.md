@@ -90,7 +90,7 @@ Invoke-RestMethod http://127.0.0.1:5087/v1/buffer -Method Post -ContentType appl
 | `POST` | `/v1/delimiter` | Set a literal output marker; `0` clears and disables capture |
 | `GET/POST` | `/v1/check` | Consume captured output, or extract it from piped text |
 | `GET/POST` | `/v1/requests/{requestId}` | Privately retrieve/reply to a waiting new message |
-| `GET/POST` | `/v1/jevset` | Draft/refine a native Jev framework; `Y` activates, `N` discards the draft |
+| `GET/POST` | `/v1/jevset` | Draft/refine a native Jev framework; `Y` activates, `N` clears draft/history/activation |
 | `POST` | `/v1/jevask` | Evaluate one text/JSON state with the activated framework |
 | `POST` | `/v1/cereal` | Serialize one image as labeled, console-safe ASCII |
 | `GET/POST` | `/v1/ocr` | One-shot OCR; `0` selects default Tesseract, `1` opts into Paddle |

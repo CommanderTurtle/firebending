@@ -83,8 +83,12 @@ that the rubric is musically/visually/semantically correct. A valid draft is
 returned in full before the `Save for /v1/jevask? Y/N` prompt. Review it.
 
 `Y` activates the current validated draft. Further text continues refinement
-without altering the activated framework until another `Y`. `N` discards the
-draft and its conversation; an already activated framework remains available.
+without altering the activated framework until another `Y`. `N` clears the
+draft, its conversation **and** the activated framework. `jevask` has no separate
+saved framework or result history: it uses the current activation owned by
+`jevset` for each one-shot request. After `N`, it returns 409 until a new draft is
+activated with `Y`. An in-flight ask cannot return a stale result after its
+framework was cleared/replaced.
 Restarting clears all Jev state. All state is in memory, not the legacy request
 log. `?session=name` isolates frameworks/conversations; omission uses `default`.
 There are at most 128 named sessions. A late inference result cannot restore a

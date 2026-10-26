@@ -99,11 +99,15 @@ module Jev =
             else
                 let! raw = Inference.readText (1024 * 1024) ct context
                 let input = Inference.textBody context raw
-                if String.IsNullOrWhiteSpace input then invalidArg "message" "Send a question, a refinement, Y to activate, or N to discard the draft."
+                if String.IsNullOrWhiteSpace input then invalidArg "message" "Send a question, a refinement, Y to activate, or N to clear this Jev session."
                 match input.Trim().ToUpperInvariant() with
                 | "N" ->
-                    lock state.Sync (fun () -> state.Epoch <- state.Epoch + 1L; state.Draft <- None; state.History.Clear())
-                    do! Formatting.write context 200 "Draft and refinement history cleared. Previously activated framework is unchanged.\n"
+                    lock state.Sync (fun () ->
+                        state.Epoch <- state.Epoch + 1L
+                        state.Draft <- None
+                        state.Active <- None
+                        state.History.Clear())
+                    do! Formatting.write context 200 "Draft, refinement history and activated framework cleared. Activate a new framework before /v1/jevask.\n"
                 | "Y" ->
                     let saved = lock state.Sync (fun () ->
                         match state.Draft with
@@ -122,7 +126,7 @@ module Jev =
                         turns.AddRange(history)
                         turns.Add(message "user" input)
                         if (turns |> Seq.sumBy (fun turn -> Encoding.UTF8.GetByteCount(turn.GetRawText()))) > 1024 * 1024 then
-                            Inference.fail 413 "Refinement history exceeds 1 MiB; discard the draft with N before starting another."
+                            Inference.fail 413 "Refinement history exceeds 1 MiB; N clears this session, including its activated framework, before starting another."
                         let mutable candidate = None
                         let mutable error = ""
                         let mutable attempt = 0
@@ -204,7 +208,10 @@ module Jev =
     let ask options stopping ctx =
         Inference.run options stopping (fun ct context -> (task {
             let state = session context
-            let framework = lock state.Sync (fun () -> state.Active |> Option.defaultWith (fun () -> Inference.fail 409 "Activate a framework with /v1/jevset and Y first."))
+            let epoch, framework = lock state.Sync (fun () ->
+                state.Epoch, (state.Active |> Option.defaultWith (fun () -> Inference.fail 409 "Activate a framework with /v1/jevset and Y first.")))
+            let ensureCurrent() = lock state.Sync (fun () ->
+                if state.Epoch <> epoch then Inference.fail 409 "Jev framework was cleared/replaced while this request was running; the stale result was discarded.")
             let! raw = Inference.readText (1024 * 1024) ct context
             if String.IsNullOrWhiteSpace(raw) then Inference.fail 400 "Supply one text/JSON state; an empty pipe is not an observation."
             let input =
@@ -215,7 +222,9 @@ module Jev =
             entry input
             let! modelId = Inference.model options ct
             let request = canonical modelId input (memberValue "questions" framework) |> validate
+            ensureCurrent()
             let! response = Inference.request options "/v1/systemone" (Some request) ct
+            ensureCurrent()
             let output =
                 try summarize request response
                 with :? ArgumentException -> Inference.fail 502 "Jev returned a malformed answer."
