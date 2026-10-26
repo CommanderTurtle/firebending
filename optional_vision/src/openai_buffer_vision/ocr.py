@@ -11,7 +11,18 @@ def detect_text(
     image: np.ndarray,
     viewport: Viewport,
     minimum_confidence: float = 45.0,
+    engine: str = "tesseract",
 ) -> list[Element]:
+    if engine == "paddle":
+        try:
+            return _paddle_text(image, viewport, minimum_confidence)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            # Match the optional producer's warning-only fallback contract.
+            raise RuntimeError(f"Paddle OCR failed: {exc}") from exc
+    if engine != "tesseract":
+        raise ValueError("OCR engine must be tesseract or paddle")
     try:
         import pytesseract
         from pytesseract import Output
@@ -61,3 +72,112 @@ def detect_text(
             )
         )
     return elements
+
+
+def _paddle_text(
+    image: np.ndarray, viewport: Viewport, minimum_confidence: float
+) -> list[Element]:
+    try:
+        from rapidocr import LangDet, LangRec, ModelType, OCRVersion, RapidOCR
+    except ImportError as exc:
+        raise RuntimeError(
+            "Paddle OCR is not installed; sync the optional 'paddle' extra"
+        ) from exc
+
+    # Same upright-screen PP-OCRv6 small profile as the consolidated browser work.
+    # One local instance per call; no warm server/socket, GPU provider or global cache.
+    engine = RapidOCR(
+        params={
+            "Global.log_level": "error",
+            "Global.use_cls": False,
+            "Global.text_score": minimum_confidence / 100.0,
+            "Det.ocr_version": OCRVersion.PPOCRV6,
+            "Det.model_type": ModelType.SMALL,
+            "Det.lang_type": LangDet.EN,
+            "Det.limit_type": "min",
+            "Det.limit_side_len": 320,
+            "Det.box_thresh": 0.5,
+            "Det.thresh": 0.3,
+            "Det.unclip_ratio": 1.6,
+            "Rec.ocr_version": OCRVersion.PPOCRV6,
+            "Rec.model_type": ModelType.SMALL,
+            "Rec.lang_type": LangRec.EN,
+            "EngineConfig.onnxruntime.use_cuda": False,
+            "EngineConfig.onnxruntime.use_dml": False,
+            "EngineConfig.onnxruntime.use_cann": False,
+            "EngineConfig.onnxruntime.intra_op_num_threads": 4,
+        }
+    )
+    result = engine(image)
+    elements = []
+    if result.txts is None:
+        return elements
+    for box, text, score in zip(result.boxes, result.txts, result.scores, strict=True):
+        if not text.strip() or float(score) * 100 < minimum_confidence:
+            continue
+        xs, ys = [float(point[0]) for point in box], [float(point[1]) for point in box]
+        elements.append(
+            Element(
+                role="text",
+                name=text.strip(),
+                source="paddle",
+                bbox=BoundingBox(
+                    viewport.left + min(xs),
+                    viewport.top + min(ys),
+                    max(xs) - min(xs),
+                    max(ys) - min(ys),
+                ),
+                metadata={"confidence": round(float(score) * 100, 2)},
+            )
+        )
+    return elements
+
+
+def reading_text(elements: list[Element]) -> str:
+    """Reconstruct rows/column gaps from line geometry without dropping recognized text."""
+    from statistics import median
+
+    rows: list[list[Element]] = []
+    for item in sorted(
+        elements, key=lambda value: value.bbox.y + value.bbox.height / 2
+    ):
+        if rows:
+            row = rows[-1]
+            center = median(entry.bbox.y + entry.bbox.height / 2 for entry in row)
+            height = median(entry.bbox.height for entry in row)
+            if (
+                abs(item.bbox.y + item.bbox.height / 2 - center)
+                < min(height, item.bbox.height) / 2
+            ):
+                row.append(item)
+                continue
+        rows.append([item])
+    if not rows:
+        return ""
+    char_width = max(
+        1.0, median(item.bbox.width / max(1, len(item.name)) for item in elements)
+    )
+    left = min(item.bbox.x for item in elements)
+    line_height = median(item.bbox.height for item in elements)
+    lines = []
+    previous_bottom = None
+    for row in rows:
+        row.sort(key=lambda item: item.bbox.x)
+        top = min(item.bbox.y for item in row)
+        if previous_bottom is not None and top - previous_bottom > line_height:
+            lines.append("")
+        pieces, last_right = [], left
+        for item in row:
+            # Bound indentation memory for malformed model geometry, not text length.
+            gap = min(
+                4096,
+                max(
+                    0 if not pieces else 1,
+                    round((item.bbox.x - last_right) / char_width),
+                ),
+            )
+            pieces.append(" " * gap + item.name)
+            last_right = item.bbox.x2
+        lines.append("".join(pieces).rstrip())
+        previous_bottom = max(item.bbox.y2 for item in row)
+    return "\n".join(lines)

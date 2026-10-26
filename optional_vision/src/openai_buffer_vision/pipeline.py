@@ -7,7 +7,7 @@ from typing import Any
 from .capture import CaptureFrame, capture_screen
 from .model import Element, Observation, Viewport
 
-SOURCE_PRIORITY = {"uia": 0, "tesseract": 1, "opencv": 2}
+SOURCE_PRIORITY = {"uia": 0, "tesseract": 1, "paddle": 1, "opencv": 2}
 
 
 @dataclass(slots=True)
@@ -20,6 +20,7 @@ class PipelineOptions:
     include_containers: bool = False
     max_uia_nodes: int = 300
     request_id: str | None = None
+    ocr_engine: str = "tesseract"
 
 
 @dataclass(slots=True)
@@ -127,7 +128,9 @@ def observe(options: PipelineOptions) -> PipelineResult:
         try:
             from .ocr import detect_text
 
-            elements.extend(detect_text(frame.image, frame.viewport))
+            elements.extend(
+                detect_text(frame.image, frame.viewport, engine=options.ocr_engine)
+            )
         except RuntimeError as exc:
             warnings.append(str(exc))
         timings["ocr_ms"] = round((perf_counter() - stage) * 1000, 2)

@@ -68,6 +68,29 @@ module Program =
             |> Option.ofObj
             |> Option.defaultValue "http://127.0.0.1:7777/run"
 
+        let setting key fallback = builder.Configuration.["Daemon:" + key] |> Option.ofObj |> Option.defaultValue fallback
+        let ocrPython =
+            let roots = [ Directory.GetCurrentDirectory(); AppContext.BaseDirectory ]
+            let candidates = seq {
+                for root in roots do
+                    let mutable directory = Some(DirectoryInfo(root))
+                    for _ in 0..6 do
+                        match directory with
+                        | Some current ->
+                            yield Path.Combine(current.FullName, "optional_vision", ".venv", (if OperatingSystem.IsWindows() then "Scripts/python.exe" else "bin/python"))
+                            directory <- Option.ofObj current.Parent
+                        | None -> () }
+            candidates |> Seq.tryFind File.Exists |> Option.defaultValue (if OperatingSystem.IsWindows() then "python" else "python3")
+        let inference = {
+            BaseUrl = setting "NinferBaseUrl" "http://127.0.0.1:8000"
+            DaemonUrl = url
+            Model = setting "NinferModel" ""
+            ApiKey = setting "NinferApiKey" ""
+            TimeoutSeconds = int (setting "PerceptionTimeoutSeconds" "120")
+            MaxTokens = int (setting "NinferMaxTokens" "8192")
+            OcrPython = setting "OcrPython" ocrPython }
+        if inference.TimeoutSeconds < 1 || inference.TimeoutSeconds > 900 || inference.MaxTokens < 1 then
+            invalidArg "perception" "PerceptionTimeoutSeconds must be 1-900 and NinferMaxTokens must be positive."
         Files.configure dataDirectory
 
         builder.WebHost.UseUrls(url) |> ignore
@@ -194,6 +217,10 @@ module Program =
         app.MapPost("/v1/buffer", RequestDelegate(Daemon.handleBuffer)) |> ignore
 
         app.MapPost("/v1/format", RequestDelegate(Messages.guard Formatting.handle)) |> ignore
+        app.MapMethods("/v1/jevset", [| "GET"; "POST" |], RequestDelegate(Messages.guard (Jev.set inference app.Lifetime.ApplicationStopping))) |> ignore
+        app.MapPost("/v1/jevask", RequestDelegate(Messages.guard (Jev.ask inference app.Lifetime.ApplicationStopping))) |> ignore
+        app.MapMethods("/v1/ocr", [| "GET"; "POST" |], RequestDelegate(Messages.guard (Perception.ocr inference app.Lifetime.ApplicationStopping))) |> ignore
+        app.MapPost("/v1/cereal", RequestDelegate(Messages.guard (Perception.cereal inference app.Lifetime.ApplicationStopping))) |> ignore
         app.MapMethods("/v1/file", [| "GET"; "POST"; "DELETE" |], RequestDelegate(Messages.guard Messages.files)) |> ignore
         app.MapMethods("/v1/multichat", [| "GET"; "POST" |], RequestDelegate(Messages.guard Messages.multichat)) |> ignore
         app.MapPost("/v1/delimiter", RequestDelegate(Messages.guard Messages.delimiter)) |> ignore

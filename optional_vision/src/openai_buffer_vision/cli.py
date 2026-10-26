@@ -22,6 +22,8 @@ def _doctor() -> int:
         "opencv": importlib.util.find_spec("cv2") is not None,
         "pytesseract": importlib.util.find_spec("pytesseract") is not None,
         "tesseract_executable": shutil.which("tesseract"),
+        "rapidocr": importlib.util.find_spec("rapidocr") is not None,
+        "onnxruntime": importlib.util.find_spec("onnxruntime") is not None,
     }
     print(json.dumps(checks, indent=2))
     return 0 if checks["screen_capture"] and checks["http_client"] else 1
@@ -36,6 +38,7 @@ def _observe(args: argparse.Namespace) -> int:
             use_uia=args.uia,
             use_cv=args.cv,
             use_ocr=args.ocr,
+            ocr_engine=args.ocr_engine,
             include_containers=args.include_containers,
             max_uia_nodes=args.max_uia_nodes,
             request_id=args.request_id,
@@ -99,6 +102,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--ocr", action=argparse.BooleanOptionalAction, default=False
     )
     observe_parser.add_argument("--include-containers", action="store_true")
+    observe_parser.add_argument(
+        "--ocr-engine", choices=("tesseract", "paddle"), default="tesseract"
+    )
     observe_parser.add_argument("--max-uia-nodes", type=int, default=300)
     observe_parser.add_argument("--request-id")
     observe_parser.add_argument(

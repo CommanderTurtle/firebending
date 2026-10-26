@@ -24,6 +24,8 @@ flowchart LR
 ```
 
 The daemon is the transport boundary. Vision producers cannot click, type, or execute actions.
+Separate opt-in perception pipes call an already running NInfer model or a cold
+OCR helper; the original manual chat/buffer flow is unchanged.
 
 ## Requirements
 
@@ -88,10 +90,18 @@ Invoke-RestMethod http://127.0.0.1:5087/v1/buffer -Method Post -ContentType appl
 | `POST` | `/v1/delimiter` | Set a literal output marker; `0` clears and disables capture |
 | `GET/POST` | `/v1/check` | Consume captured output, or extract it from piped text |
 | `GET/POST` | `/v1/requests/{requestId}` | Privately retrieve/reply to a waiting new message |
+| `GET/POST` | `/v1/jevset` | Draft/refine a native Jev framework; `Y` activates, `N` discards the draft |
+| `POST` | `/v1/jevask` | Evaluate one text/JSON state with the activated framework |
+| `POST` | `/v1/cereal` | Serialize one image as labeled, console-safe ASCII |
+| `GET/POST` | `/v1/ocr` | One-shot OCR; `0` selects default Tesseract, `1` opts into Paddle |
 
 Other common `/v1` POST routes are logged compatibility stubs and return `501`; the daemon does not falsely claim those capabilities.
 
 See [Markdown messages and pipes](docs/MESSAGES.md) for curl examples, model-relay handoff, MIME handling, newline repair, sessions, delimiters, bounded retries, and lifecycle rules. These are additive: existing buffer, Zuko/Iroh, and vision clients keep their contracts. The daemon does not start an inference model or automatically click a continuation button.
+
+See [one-shot perception and Jev](docs/PERCEPTION.md) for NInfer configuration,
+the image → cereal → Jev card pipeline, draft/activation rules and cold OCR setup.
+These routes never consume `/v1/file` attachments or poll while idle.
 
 ## Optional Vision
 

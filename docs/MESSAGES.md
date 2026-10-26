@@ -3,9 +3,11 @@
 These endpoints are additive. The existing `/v1/chat/completions`, `/v1/buffer`,
 Zuko, Iroh, macro, and vision contracts remain available.
 
-The daemon is still a **manual response broker**, not an inference engine or a
-new tool runner. A model relay reads a waiting request and posts its answer.
-There are no hidden model calls, desktop nudges, tools, or generation-token caps.
+These message routes remain a **manual response broker**. A model relay reads a
+waiting request and posts its answer. They add no hidden model calls, desktop
+nudges, tools, or generation-token caps. The separate explicit
+[perception/Jev routes](PERCEPTION.md) can call configured NInfer on demand;
+they do not change this broker or its attachment buffer.
 
 ## The six small endpoints
 

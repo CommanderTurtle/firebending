@@ -10,6 +10,13 @@ New code lives in `Formatting.fs`, `Delimiters.fs`, and `Messages.fs`, not in th
 compatibility response normalizer. This keeps Markdown presentation from
 changing existing OpenAI-compatible JSON responses.
 
+`Inference.fs` supplies a separate on-demand NInfer client, bounded input/response
+pipes, deadlines and one shared heavy-operation lane. `Jev.fs` owns in-memory
+draft/refinement/activated frameworks and validates native SystemOne responses.
+`Perception.fs` owns ASCII serialization and the independently selected cold OCR
+helper. None of these enters the manual pending queue, consumes staged files,
+persists request bodies, captures a screen or executes model-generated tools.
+
 `src/OpenAiBufferDaemon` owns HTTP transport, the pending request queue, atomic latest-state files, and append-only JSONL history. Chat bodies are stored as received. A buffer response either passes through as a complete `choices` response or is wrapped as a Chat Completions response.
 
 The vision route validates the stable `vision-observation/1` boundary before writing anything. It stores observations but does not infer targets or execute actions.
@@ -30,7 +37,7 @@ by default. See [MESSAGES.md](MESSAGES.md) for the complete lifecycle.
 
 1. Capture the physical monitor or explicit region with MSS.
 2. Read the foreground native application through Windows UI Automation.
-3. Optionally collect text through Tesseract.
+3. Optionally collect text through Tesseract (default) or opt-in Paddle.
 4. Optionally collect generic geometry through OpenCV.
 5. Remove off-screen and duplicate regions, preferring structured sources.
 6. Emit physical and normalized coordinates, ScreenTag text, and timing metadata.
