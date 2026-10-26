@@ -21,7 +21,9 @@ def detect_text(
         ) from exc
 
     try:
-        data = pytesseract.image_to_data(image, output_type=Output.DICT)
+        # CaptureFrame is BGR (as used by OpenCV); Tesseract expects RGB.
+        rgb = image[:, :, ::-1] if image.ndim == 3 and image.shape[2] == 3 else image
+        data = pytesseract.image_to_data(rgb, output_type=Output.DICT)
     except pytesseract.TesseractNotFoundError as exc:
         raise RuntimeError(
             "Tesseract is not installed or its executable is not on PATH"

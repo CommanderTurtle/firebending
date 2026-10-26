@@ -1,6 +1,5 @@
 import numpy as np
 import pytesseract
-
 from openai_buffer_vision.model import Viewport
 from openai_buffer_vision.ocr import detect_text
 
@@ -33,3 +32,16 @@ def test_detect_text_groups_words_on_the_same_line(monkeypatch) -> None:
         "x2": 100.0,
         "y2": 38.0,
     }
+
+
+def test_capture_bgr_is_converted_to_rgb_without_mutating_source(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        pytesseract,
+        "image_to_data",
+        lambda image, output_type: seen.append(image.copy()) or {"text": []},
+    )
+    image = np.array([[[10, 20, 30]]], dtype=np.uint8)
+    assert detect_text(image, Viewport(1, 1)) == []
+    assert seen[0].tolist() == [[[30, 20, 10]]]
+    assert image.tolist() == [[[10, 20, 30]]]

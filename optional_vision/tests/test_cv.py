@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-
 from openai_buffer_vision.cv import detect_regions
 from openai_buffer_vision.model import Viewport
 

@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
-
 from openai_buffer_vision.model import BoundingBox, Element, Observation, Viewport
 
 

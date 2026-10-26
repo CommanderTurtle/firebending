@@ -7,7 +7,6 @@ from typing import Any
 from .capture import CaptureFrame, capture_screen
 from .model import Element, Observation, Viewport
 
-
 SOURCE_PRIORITY = {"uia": 0, "tesseract": 1, "opencv": 2}
 
 

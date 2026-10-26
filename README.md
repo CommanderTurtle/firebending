@@ -35,13 +35,13 @@ The daemon is the transport boundary. Vision producers cannot click, type, or ex
 ## Quick Start
 
 ```powershell
-git clone <repository-url>
-cd openai-buffer-daemon
-./scripts/Build.ps1
+git clone https://github.com/CommanderTurtle/firebending.git
+cd firebending
+./scripts/Build.ps1 -SkipVision
 ./scripts/Start.ps1
 ```
 
-The default base URL is `http://127.0.0.1:5087`. Runtime files default to the current user's Desktop; set a different location with `-DataDirectory`.
+The default base URL is `http://127.0.0.1:5087`. Runtime files default to the current user's Desktop (or local application data on a headless host); set a different location with `-DataDirectory`. The daemon and the new Markdown endpoints need only .NET; vision and MCP remain optional.
 
 ```powershell
 ./scripts/Start.ps1 -Url http://127.0.0.1:5091 -DataDirectory "$env:TEMP/openai-buffer-daemon"
@@ -81,8 +81,17 @@ Invoke-RestMethod http://127.0.0.1:5087/v1/buffer -Method Post -ContentType appl
 | `POST` | `/v1/rgd1` ... `/v1/rgd5` | Replace one persistent Regedited command slot |
 | `POST` | `/v1/zuko` | Convert submitted text into `%TEMP%\tempreg.txt`, then optionally call Tasket |
 | `POST` | `/v1/iroh` | Run one Regedited slot, wrap the clipboard, then optionally call Tasket |
+| `POST` | `/v1/message` | Submit text/attachments; wait for a Markdown reply |
+| `POST` | `/v1/format` | Prettify model JSON, a message/content entry, SSE capture, or piped text |
+| `GET/POST/DELETE` | `/v1/file` | Inspect, stage, or clear one-use attachment paths |
+| `GET/POST` | `/v1/multichat` | Inspect preservation mode; `1` enables, `0` clears history and disables |
+| `POST` | `/v1/delimiter` | Set a literal output marker; `0` clears and disables capture |
+| `GET/POST` | `/v1/check` | Consume captured output, or extract it from piped text |
+| `GET/POST` | `/v1/requests/{requestId}` | Privately retrieve/reply to a waiting new message |
 
 Other common `/v1` POST routes are logged compatibility stubs and return `501`; the daemon does not falsely claim those capabilities.
+
+See [Markdown messages and pipes](docs/MESSAGES.md) for curl examples, model-relay handoff, MIME handling, newline repair, sessions, delimiters, bounded retries, and lifecycle rules. These are additive: existing buffer, Zuko/Iroh, and vision clients keep their contracts. The daemon does not start an inference model or automatically click a continuation button.
 
 ## Optional Vision
 
@@ -101,7 +110,7 @@ The preference order is DOM, UI Automation, OCR, then generic CV geometry. See [
 ./scripts/Test-All.ps1
 ```
 
-This builds F#, runs Python unit and schema tests, and proves the chat/buffer and observation handshakes against a temporary live daemon.
+This builds F# with warnings treated as errors, runs Python/HTTP tests, checks the optional MCP types/dependencies, and proves the chat/buffer and observation handshakes against temporary daemons. Bun is needed for the MCP test step. Desktop capture is not performed unless requested with `./scripts/Test-All.ps1 -CaptureDesktop`.
 
 ## Macro, Zuko, and Iroh
 

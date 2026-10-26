@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import sys
+from ctypes import wintypes
 from typing import Any
 
 from .model import BoundingBox, Element, Viewport
 
+logger = logging.getLogger(__name__)
 
 SEMANTIC_CONTROLS = {
     "button",
@@ -52,7 +55,10 @@ def collect_uia(
             "UI Automation support is not installed; use the 'windows' or 'all' extra"
         ) from exc
 
-    hwnd = int(ctypes.windll.user32.GetForegroundWindow())
+    foreground = ctypes.windll.user32.GetForegroundWindow
+    foreground.argtypes = []
+    foreground.restype = wintypes.HWND
+    hwnd = int(foreground() or 0)
     if not hwnd:
         return [], {}
 
@@ -61,10 +67,16 @@ def collect_uia(
     try:
         window["title"] = root.window_text()
     except Exception:
-        pass
+        logger.debug("Foreground window title became unavailable", exc_info=True)
 
     results: list[Element] = []
-    stack: list[tuple[Any, int]] = [(child, 1) for child in reversed(root.children())]
+    try:
+        children = root.children()
+    except Exception as exc:
+        # Providers/windows can disappear mid-snapshot. Let the pipeline's
+        # existing RuntimeError fallback continue with OCR/CV instead of dying.
+        raise RuntimeError("Foreground UIA tree became unavailable") from exc
+    stack: list[tuple[Any, int]] = [(child, 1) for child in reversed(children)]
     inspected = 0
 
     while stack and inspected < max_nodes:
@@ -101,14 +113,18 @@ def collect_uia(
                     )
                 )
         except Exception:
-            pass
+            logger.debug(
+                "UIA element became unavailable during inspection", exc_info=True
+            )
 
         if depth < max_depth:
             try:
                 children = wrapper.children()
                 stack.extend((child, depth + 1) for child in reversed(children))
             except Exception:
-                pass
+                logger.debug(
+                    "UIA children became unavailable during inspection", exc_info=True
+                )
 
     window["uia_nodes_inspected"] = inspected
     window["uia_nodes_emitted"] = len(results)

@@ -9,5 +9,6 @@
 .vscode/
 artifacts/
 test-output/
+optional-mcp/node_modules/
 *.log
 *.pid

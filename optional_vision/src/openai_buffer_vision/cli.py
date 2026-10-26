@@ -5,8 +5,8 @@ import importlib.util
 import json
 import shutil
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from .capture import parse_region
 from .client import DaemonClient

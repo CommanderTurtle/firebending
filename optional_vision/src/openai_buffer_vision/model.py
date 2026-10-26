@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -118,9 +118,7 @@ class Observation:
     window: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     captured_at: str = field(
-        default_factory=lambda: (
-            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        )
+        default_factory=lambda: datetime.now(UTC).isoformat().replace("+00:00", "Z")
     )
 
     def screen_tag(self) -> str:

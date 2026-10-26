@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [int]$Port = 5097
+    [int]$Port = 5097,
+    [switch]$SkipCapture
 )
 
 $ErrorActionPreference = 'Stop'
@@ -74,9 +75,11 @@ try {
     $schema = Invoke-RestMethod "$url/v1/vision/schema"
     if ($schema.title -ne 'Vision Observation') { throw 'Bundled schema endpoint failed.' }
 
-    $producerOutput = Join-Path $dataDirectory 'python-producer-observation.json'
-    & uv run --project (Join-Path $root 'optional_vision') buffer-vision observe --no-uia --cv --post --daemon-url $url --output $producerOutput
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $producerOutput)) { throw 'Python observation producer did not complete.' }
+    if (-not $SkipCapture) {
+        $producerOutput = Join-Path $dataDirectory 'python-producer-observation.json'
+        & uv run --project (Join-Path $root 'optional_vision') buffer-vision observe --no-uia --cv --post --daemon-url $url --output $producerOutput
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $producerOutput)) { throw 'Python observation producer did not complete.' }
+    }
 
     $chat = @{ model = 'manual-buffer-model'; messages = @(@{ role = 'user'; content = 'smoke' }) } | ConvertTo-Json -Depth 10
     $chatJob = Start-Job -ScriptBlock {
@@ -126,7 +129,8 @@ try {
         throw 'Streaming response did not emit content and the terminal marker.'
     }
 
-    Write-Host 'Daemon smoke test passed: validation, schema discovery, Python producer, buffered chat, and SSE completion.'
+    Write-Host 'Daemon smoke test passed: validation, schema discovery, buffered chat, and SSE completion.'
+    if ($SkipCapture) { Write-Host 'Desktop capture not requested; synthetic observations were used.' }
 } finally {
     if ($chatJob) { Remove-Job $chatJob -Force -ErrorAction SilentlyContinue }
     if ($streamJob) { Remove-Job $streamJob -Force -ErrorAction SilentlyContinue }
@@ -134,5 +138,10 @@ try {
         $process.Kill($true)
         $process.WaitForExit()
     }
-    Remove-Item -LiteralPath $dataDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $resolvedData = [IO.Path]::GetFullPath($dataDirectory)
+    if ($resolvedData.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        [IO.Path]::GetFileName($resolvedData).StartsWith('openai-buffer-daemon-smoke-')) {
+        Remove-Item -LiteralPath $resolvedData -Recurse -Force -ErrorAction SilentlyContinue
+    } else { throw 'Refusing cleanup outside the owned smoke-test directory.' }
 }
