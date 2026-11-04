@@ -1,4 +1,4 @@
-use crate::ff::{drain, read_exact_stream, spawn_stdout_pipe, ffmpeg};
+use crate::ff::{ffmpeg, read_exact_stream, spawn_stdout_pipe};
 use crate::probe::Probe;
 use crate::util::{bail, ensure_dir, exists, write_json, Fps, Work, R};
 use serde::{Deserialize, Serialize};
@@ -144,33 +144,30 @@ pub fn run(
     let fbytes = aw * ah;
     let fps = probe.fps();
 
-    // ONE decode feeds: JPEG dump, optional PNG-all dump, and the gray analysis pipe.
+    // ONE hwaccel decode feeds three outputs, each with its OWN filtergraph.
+    // (-vf binds to the following output only — never make the scale global,
+    //  or the JPEG dump silently becomes analysis-res.)
     let scale_filter = format!("scale={aw}:-2,format=gray");
-    let mut cmd = ffmpeg(
-        hwaccel,
-        &[
-            "-i",
-            probe.path.as_str(),
-            "-an",
-            "-vf",
-            &scale_filter,
-            "-y",
-            "-c:v",
-            "mjpeg",
-            "-q:v",
-            &jpeg_q.to_string(),
-            "-start_number",
-            "1",
-        ],
-    );
+    let mut cmd = ffmpeg(hwaccel, &["-i", probe.path.as_str(), "-an", "-y"]);
+    cmd.args([
+        "-map",
+        "0:v:0",
+        "-c:v",
+        "mjpeg",
+        "-q:v",
+        &jpeg_q.to_string(),
+        "-start_number",
+        "1",
+    ]);
     cmd.arg(w.frames_dir().join("%06d.jpg"));
     if png_all {
-        cmd.args(["-c:v:1", "png", "-start_number", "1"]);
+        cmd.args(["-map", "0:v:0", "-c:v", "png", "-start_number", "1"]);
         cmd.arg(w.pngall_dir().join("%06d.png"));
     }
+    cmd.args(["-map", "0:v:0", "-vf", &scale_filter]);
     cmd.args(["-f", "rawvideo", "-pix_fmt", "gray", "-"]);
-    let mut child = spawn_stdout_pipe(cmd, "decode+dump")?;
-    let pipe = child.stdout.take().expect("piped stdout");
+    let mut spawned = spawn_stdout_pipe(cmd, "decode+dump")?;
+    let pipe = spawned.child.stdout.take().expect("piped stdout");
     let mut pipe = std::io::BufReader::with_capacity(4 << 20, pipe);
 
     let mut jsonl = BufWriter::new(File::create(w.frames_json())?);
@@ -338,7 +335,7 @@ pub fn run(
         }
     }
     jsonl.flush()?;
-    drain(child, "decode+dump")?;
+    spawned.finish("decode+dump")?;
 
     if let Some(mr) = motion.take() {
         intervals.push(mr.interval(&fps, aw, ah, probe.width, probe.height));
