@@ -191,8 +191,41 @@ module Zuko =
                 return Error $"Stored rgd command failed: {ex.Message}"
         }
 
-    let private invokeTasket (tasketRunUrl: string) (macro: string) (cancellationToken: CancellationToken) =
+    // The current macrohelp HTTPD (:7777, Linux) authenticates with X-Tasket-Key;
+    // the key is nonce-inferred and lives in the httpd's provisioned .env. Windows
+    // Tasket builds do not authenticate. Resolution per dispatch (so an httpd
+    // restart that re-provisions the key needs no daemon restart): explicit config
+    // value first, then MACROHELP_API_KEY from a provisioned env file, then empty
+    // (sent as no header, which keeps unauthenticated Tasket builds working).
+    let discoverTasketApiKey (configured: string) =
+        if not (String.IsNullOrWhiteSpace configured) then configured.Trim()
+        else
+            let userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            let xdgData =
+                Option.ofObj(Environment.GetEnvironmentVariable "XDG_DATA_HOME")
+                |> Option.defaultValue (Path.Combine(userProfile, ".local", "share"))
+            let appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            let candidates =
+                [ Path.Combine(xdgData, "macrohelp", "http-daemon", ".env")
+                  if not (String.IsNullOrWhiteSpace appData) then Path.Combine(appData, "Macrohelp", "http-daemon", ".env") ]
+                |> List.distinct
+            candidates
+            |> List.tryFind File.Exists
+            |> Option.bind (fun path ->
+                try
+                    File.ReadLines path
+                    |> Seq.tryPick (fun line ->
+                        let trimmed = line.TrimStart()
+                        if trimmed.StartsWith("MACROHELP_API_KEY=") then
+                            let value = trimmed.Substring("MACROHELP_API_KEY=".Length).Trim().Trim('"').Trim()
+                            if String.IsNullOrEmpty value then None else Some value
+                        else None)
+                with :? IOException -> None)
+            |> Option.defaultValue ""
+
+    let private invokeTasket (tasketRunUrl: string) (tasketKeyConfig: string) (macro: string) (cancellationToken: CancellationToken) =
         task {
+            let tasketApiKey = discoverTasketApiKey tasketKeyConfig
             let tasketBody =
                 Json.serializeCompact
                     {| task = macro
@@ -200,8 +233,12 @@ module Zuko =
                        loop = 1 |}
 
             use content = new StringContent(tasketBody, Encoding.UTF8, "application/json")
+            use message = new HttpRequestMessage(HttpMethod.Post, tasketRunUrl)
+            message.Content <- content
+            if not (String.IsNullOrWhiteSpace tasketApiKey) then
+                message.Headers.Add("X-Tasket-Key", tasketApiKey) |> ignore
             try
-                let! tasketResult = tasketClient.PostAsync(tasketRunUrl, content, cancellationToken)
+                let! tasketResult = tasketClient.SendAsync(message, cancellationToken)
                 use response = tasketResult
                 let! responseText = response.Content.ReadAsStringAsync(cancellationToken)
                 if response.IsSuccessStatusCode then
@@ -248,7 +285,7 @@ module Zuko =
                            state_file = path |})
         } :> Task
 
-    let handleZuko tasketRunUrl (ctx: HttpContext) =
+    let handleZuko (tasketRunUrl: string) (tasketKeyConfig: string) (ctx: HttpContext) =
         task {
             match readMacro() with
             | None ->
@@ -274,7 +311,7 @@ module Zuko =
                                        zone = "index:1:zone:1"
                                        tasket_skipped = true |})
                             else
-                                match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
+                                match! invokeTasket tasketRunUrl tasketKeyConfig macro ctx.RequestAborted with
                                 | Ok(status, responseText) ->
                                     do! (Responses.writeJson ctx StatusCodes.Status200OK
                                         {| ok = true
@@ -287,7 +324,7 @@ module Zuko =
                                     do! Responses.writeError ctx StatusCodes.Status502BadGateway "tasket_failed" error
         } :> Task
 
-    let handleIroh tasketRunUrl (ctx: HttpContext) =
+    let handleIroh (tasketRunUrl: string) (tasketKeyConfig: string) (ctx: HttpContext) =
         task {
             match readMacro() with
             | None ->
@@ -336,7 +373,7 @@ module Zuko =
                                                    zone = "index:1:zone:1"
                                                    tasket_skipped = true |})
                                         else
-                                            match! invokeTasket tasketRunUrl macro ctx.RequestAborted with
+                                            match! invokeTasket tasketRunUrl tasketKeyConfig macro ctx.RequestAborted with
                                             | Ok(status, responseText) ->
                                                 do! (Responses.writeJson ctx StatusCodes.Status200OK
                                                     {| ok = true

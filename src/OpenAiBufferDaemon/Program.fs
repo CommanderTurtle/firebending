@@ -68,6 +68,11 @@ module Program =
             |> Option.ofObj
             |> Option.defaultValue "http://127.0.0.1:7777/run"
 
+        let tasketKeyConfig =
+            builder.Configuration.["Daemon:TasketApiKey"]
+            |> Option.ofObj
+            |> Option.defaultValue ""
+
         let setting key fallback = builder.Configuration.["Daemon:" + key] |> Option.ofObj |> Option.defaultValue fallback
         let ocrPython =
             let roots = [ Directory.GetCurrentDirectory(); AppContext.BaseDirectory ]
@@ -239,9 +244,9 @@ module Program =
         app.MapPost("/v1/rgd4", RequestDelegate(Zuko.handleRgd 4)) |> ignore
         app.MapPost("/v1/rgd5", RequestDelegate(Zuko.handleRgd 5)) |> ignore
 
-        app.MapPost("/v1/zuko", RequestDelegate(Zuko.handleZuko tasketRunUrl)) |> ignore
+        app.MapPost("/v1/zuko", RequestDelegate(Zuko.handleZuko tasketRunUrl tasketKeyConfig)) |> ignore
 
-        app.MapPost("/v1/iroh", RequestDelegate(Zuko.handleIroh tasketRunUrl)) |> ignore
+        app.MapPost("/v1/iroh", RequestDelegate(Zuko.handleIroh tasketRunUrl tasketKeyConfig)) |> ignore
 
         app.MapPost("/v1/vision/observations", RequestDelegate(Vision.handleObservation)) |> ignore
 

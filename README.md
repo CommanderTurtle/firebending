@@ -127,7 +127,8 @@ This builds F# with warnings treated as errors, runs Python/HTTP tests, checks t
 These routes share one replaceable Regedited output file:
 
 ```text
-%TEMP%\tempreg.txt
+%TEMP%\tempreg.txt          (Windows)
+/tmp/tempreg.txt            (Linux/macOS: Path.GetTempPath())
 ```
 
 Every Zuko or Iroh call creates a blank canonical one-index Regedited document, then pipes the submitted or captured multiline text through `rgd rs` as `i1z1`. Regedited owns the final zone range and any relocation bookkeeping. The resulting text is available as:
@@ -146,6 +147,8 @@ Invoke-RestMethod 'http://127.0.0.1:5087/v1/macro' -Method Post -ContentType 'te
 ```
 
 After Zuko or Iroh writes `tempreg.txt`, the daemon posts this saved filename to Tasket at `http://127.0.0.1:7777/run`.
+
+The current macrohelp HTTPD authenticates that dispatch with an `X-Tasket-Key` header. This exists on Linux only: the Omarchy HTTPD infers its key from a server nonce and provisions it into its own env file; Windows Tasket builds still dispatch unauthenticated. The daemon resolves the key fresh on every dispatch, so restarting the HTTPD (which can re-provision the key) needs no daemon restart. Resolution order: the explicit `Daemon:TasketApiKey` setting (env override `OPENAI_BUFFER_Daemon__TasketApiKey`), then `MACROHELP_API_KEY` from a provisioned env file (`${XDG_DATA_HOME:-~/.local/share}/macrohelp/http-daemon/.env`, or `%LOCALAPPDATA%\Macrohelp\http-daemon\.env` if one is ever provisioned there), then no header at all, which keeps unauthenticated Tasket builds working.
 
 To generate `tempreg.txt` without invoking Tasket, persist the literal value `off`:
 
