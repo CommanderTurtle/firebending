@@ -11,22 +11,20 @@ if (!workdir) {
   console.error("usage: bun preview/server.ts <workdir>   (work/<slug> dir)");
   process.exit(2);
 }
-const ROOT = Bun.fileURLToPath(new URL(".", import.meta.url));
+const HERE = new URL(".", import.meta.url).pathname;
+
 const WORK = await (async () => {
   const p = process.argv[2]!;
-  return Bun.file(join(p, "probe.json")).exists ? p : join(process.cwd(), p);
+  if (await Bun.file(join(p, "probe.json")).exists()) return p;
+  const abs = join(process.cwd(), p);
+  if (await Bun.file(join(abs, "probe.json")).exists()) return abs;
+  console.error(`reh-preview: no probe.json in ${p} — point at a work/<slug>/ dir`);
+  process.exit(2);
 })();
-
-const HERE = new URL(".", import.meta.url).pathname;
 
 async function readJson(name: string): Promise<unknown | null> {
   const f = Bun.file(join(WORK, name));
   return (await f.exists()) ? await f.json() : null;
-}
-
-function videoPath(): string | null {
-  // probe.json carries the absolute source path; fall back to first mp4 in parent
-  return null; // resolved in /api/state to keep this sync-free
 }
 
 let cachedVideo: string | null | undefined;
@@ -134,4 +132,3 @@ const server = Bun.serve({
 console.log(`REH preview: http://${server.hostname}:${server.port}`);
 console.log(`  work dir:  ${WORK}`);
 console.log(`  save cuts → ${join(WORK, "cuts.json")}  then:  reh scenes apply ${WORK} --file ${join(WORK, "cuts.json")}`);
-void videoPath;

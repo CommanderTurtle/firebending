@@ -52,7 +52,15 @@ function sleep(s: number): Promise<void> {
 const WORK = resolve(work!);
 const read = <T,>(p: string): T => JSON.parse(readFileSync(join(WORK, p), "utf8"));
 const scenes = read<{ fps: [number, number]; width: number; height: number; nb_frames: number; scenes: Scene[] }>("scenes.json");
-const probe = read<{ path: string; vcodec: string; acodec?: string; duration_s: number }>("probe.json");
+const probe = read<{
+  path: string;
+  vcodec: string;
+  acodec?: string;
+  width: number;
+  height: number;
+  fps: [number, number];
+  duration_s: number;
+}>("probe.json");
 const waveform = existsSync(join(WORK, "waveform.json"))
   ? read<{ silence: { t0: number; t1: number }[]; beats: { t: number; strength: number }[] }>("waveform.json")
   : { silence: [], beats: [] };

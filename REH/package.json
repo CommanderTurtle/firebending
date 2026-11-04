@@ -1,0 +1,13 @@
+{
+  "name": "reh",
+  "private": true,
+  "module": true,
+  "scripts": {
+    "preview": "bun preview/server.ts",
+    "infer": "bun infer/infer.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}
