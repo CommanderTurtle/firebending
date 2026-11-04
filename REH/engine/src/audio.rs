@@ -56,6 +56,7 @@ pub fn remux(w: &Work, probe: &Probe, force: bool) -> R<Option<String>> {
         return Ok(Some(ext));
     }
     let mut args: Vec<std::ffi::OsString> = Vec::new();
+    args.extend(["-i"].iter().map(|s| s.to_string().into()));
     args.push(probe.path.clone().into());
     args.extend(["-vn", "-c", "copy", "-y"].iter().map(|s| s.to_string().into()));
     if ext == "m4a" {
