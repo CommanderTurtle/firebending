@@ -159,7 +159,10 @@ module Zuko =
                     |> Convert.ToBase64String
 
                 let startInfo = ProcessStartInfo()
-                startInfo.FileName <- "powershell"
+                // Windows ships `powershell`; PowerShell 7 (pwsh) is the cross-platform
+                // name and provides Get-Clipboard on the Linux distros that back it
+                // (wl-clipboard/xclip). Same encoded script works on both.
+                startInfo.FileName <- (if OperatingSystem.IsWindows() then "powershell" else "pwsh")
                 startInfo.ArgumentList.Add("-NoLogo")
                 startInfo.ArgumentList.Add("-NoProfile")
                 startInfo.ArgumentList.Add("-NonInteractive")
