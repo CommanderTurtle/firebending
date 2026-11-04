@@ -4,7 +4,7 @@
  * [ADD CUT] button; saves cuts.json into the work dir for `reh scenes apply`.
  */
 import { Glob } from "bun";
-import { join, normalize } from "path";
+import { join, normalize, resolve } from "path";
 
 const workdir = process.argv[2];
 if (!workdir) {
@@ -14,10 +14,8 @@ if (!workdir) {
 const HERE = new URL(".", import.meta.url).pathname;
 
 const WORK = await (async () => {
-  const p = process.argv[2]!;
+  const p = resolve(process.argv[2]!); // absolutize: guards and file paths stay sound
   if (await Bun.file(join(p, "probe.json")).exists()) return p;
-  const abs = join(process.cwd(), p);
-  if (await Bun.file(join(abs, "probe.json")).exists()) return abs;
   console.error(`reh-preview: no probe.json in ${p} — point at a work/<slug>/ dir`);
   process.exit(2);
 })();
@@ -97,13 +95,15 @@ const server = Bun.serve({
       return fileResponse(v);
     }
     if (path.startsWith("/frames/")) {
-      const name = path.slice("/frames/".length).replace(/[^\d.]/g, "");
+      const name = path.slice("/frames/".length);
+      if (!/^\d{6}\.jpg$/.test(name)) return new Response("expected NNNNNN.jpg", { status: 400 });
       return serveWithin(join("frames", name));
     }
     if (path.startsWith("/keep/")) {
-      const rel = path.slice("/keep/".length);
-      if (/[.]|[.][.]/.test(rel.split("/").join(" ")) && rel.includes("..")) return new Response("forbidden", { status: 403 });
-      return serveWithin(join("scenes", rel));
+      // /keep/<NN-hhmmss>/<NNNNNN>.png → work/scenes/<NN-hhmmss>/keep/<NNNNNN>.png
+      const m = path.slice("/keep/".length).match(/^([\w-]+)\/(\d{6}\.png)$/);
+      if (!m) return new Response("expected NN-hhmmss/NNNNNN.png", { status: 400 });
+      return serveWithin(join("scenes", m[1]!, "keep", m[2]!));
     }
     if (path === "/api/cuts" && req.method === "POST") {
       const body = (await req.json().catch(() => null)) as { cuts?: { t?: number }[]; confirmed?: boolean } | null;

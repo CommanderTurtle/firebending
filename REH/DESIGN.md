@@ -106,8 +106,11 @@ bbox in **native** pixel coords (scaled coords × scale-back).
  "cuts":[{"f":232,"t":7.7333,"source":"infer","kind":"hard","conf":0.91},
          {"f":410,"t":13.667,"source":"audio","kind":"beat","conf":0.4},
          {"f":235,"t":7.8333,"source":"user","kind":"manual","conf":1.0}],
- "scenes":[{"i":0,"f0":0,"f1":231,"t0":0.0,"t1":7.7,"dir":"scenes/00-000000"}]}
+ "scenes":[{"i":0,"f0":0,"f1":231,"t0":0.0,"t1":7.7,"dir":"00-000000"}]}
 ```
+`dir` is the folder name under `scenes/` (engine writes the bare `NN-hhmmss`;
+consumers MUST resolve `scenes/<dir>` and tolerate a `scenes/`-prefixed value).
+
 `cuts` sorted by `f`; precedence `user > infer > audio`. Final boundaries = user cuts if
 any user cut exists, else infer cuts, plus audio hints listed alongside for the human.
 Every scene boundary MUST equal a cut frame; scene `[f0,f1]` inclusive.
