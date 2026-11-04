@@ -1,0 +1,6 @@
+JOURNAL.md
+work/
+engine/target/
+node_modules/
+infer/out/
+*.log

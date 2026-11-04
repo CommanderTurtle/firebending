@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>REH · cut editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: dark; --bg:#0b0f14; --fg:#e8eef5; --mut:#8b98a5; --acc:#4da3ff; --warn:#f5c542; --ok:#6dd372; --line:#1c2530; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { display:flex; gap:16px; align-items:baseline; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; } .dim { color:var(--mut); font-size:12px; }
+  #video-wrap { display:flex; justify-content:center; background:#000; }
+  video { max-width:100%; max-height:54vh; display:block; }
+  #tl { width:100%; height:110px; display:block; cursor:crosshair; }
+  .bar { display:flex; gap:8px; padding:10px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; align-items:center; }
+  button { background:#132030; color:var(--fg); border:1px solid #26435e; border-radius:6px; padding:6px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  button.primary { border-color:var(--acc); color:var(--acc); }
+  button.ok { border-color:var(--ok); color:var(--ok); }
+  button.warn { border-color:var(--warn); color:var(--warn); }
+  #msg { color:var(--ok); font-size:12px; min-height:1em; }
+  #scenes { padding:8px 16px; }
+  #scenes table { border-collapse:collapse; width:100%; font-size:12px; }
+  #scenes th, #scenes td { text-align:left; padding:2px 10px 2px 0; border-bottom:1px solid var(--line); color:var(--fg); font-weight:400; }
+  #scenes th { color:var(--mut); }
+  #scenes tr { cursor:pointer; } #scenes tr:hover td { color:var(--acc); }
+  kbd { background:#132030; border:1px solid #26435e; border-radius:4px; padding:0 5px; font-size:11px; }
+  .legend { display:flex; gap:14px; font-size:11px; color:var(--mut); align-items:center; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>REH · cut editor</h1>
+  <span id="info" class="dim">loading…</span>
+  <span class="legend" style="margin-left:auto">
+    <span><i class="sw" style="background:var(--warn)"></i>inferred</span>
+    <span><i class="sw" style="background:var(--acc)"></i>user</span>
+    <span><i class="sw" style="background:#555"></i>beats</span>
+    <span><i class="sw" style="background:#123b1f"></i>motion</span>
+  </span>
+</header>
+
+<div id="video-wrap"><video id="v" preload="auto" src="/media"></video></div>
+<canvas id="tl"></canvas>
+
+<div class="bar">
+  <button id="play">play/pause</button>
+  <button id="back1" title="previous frame">◀ frame</button>
+  <button id="fwd1" title="next frame">frame ▶</button>
+  <span id="tcode" class="dim">0.000s · f0</span>
+  <button class="primary" id="addcut">＋ ADD CUT at playhead</button>
+  <button class="warn" id="delcut">✕ delete nearest</button>
+  <button id="clear">clear user</button>
+  <button class="ok" id="save">save cuts.json</button>
+  <button class="ok" id="lgtm">LGTM (accept inferred)</button>
+</div>
+<div class="bar"><span id="msg"></span><span class="dim">
+  <kbd>space</kbd> play · <kbd>←→</kbd> ±5s · <kbd>,.</kbd> frame · <kbd>c</kbd> cut · <kbd>x</kbd> delete · <kbd>s</kbd> save · <kbd>y</kbd> lgtm
+</span></div>
+
+<div id="scenes"><em class="dim">scene table loading…</em></div>
+
+<script>
+const S = { probe:null, waveform:null, motion:null, scenes:null, cuts:[], confirmed:false, inferred:[], beats:[], motions:[] };
+const v = document.getElementById("v");
+const tl = document.getElementById("tl");
+const ctx = tl.getContext("2d");
+const fmt = t => { const m=Math.floor(t/60), s=(t%60); return (m?m+":":"")+ (s<10&&m?"0":"")+s.toFixed(3); };
+const tcode = () => { const f=Math.round(v.currentTime*S.probe.fps[0]/S.probe.fps[1]); document.getElementById("tcode").textContent = fmt(v.currentTime)+"s · f"+f; draw(); };
+const frameDur = () => S.probe ? S.probe.fps[1]/S.probe.fps[0] : 1/30;
+
+async function boot() {
+  const r = await fetch("/api/state").then(x=>x.json());
+  Object.assign(S, { probe:r.probe, waveform:r.waveform, motion:r.motion, scenes:r.scenes });
+  if (r.cuts && Array.isArray(r.cuts.cuts)) { S.cuts = r.cuts.cuts.map(c=>c.t); S.confirmed = !!r.cuts.confirmed; }
+  if (S.scenes) { S.inferred = (S.scenes.cuts||[]).filter(c=>c.source==="infer").map(c=>c.t); S.beats = (S.scenes.cuts||[]).filter(c=>c.source==="audio").map(c=>c.t); }
+  if (S.motion) S.motions = S.motion.intervals.filter(i=>i.kind==="motion");
+  const p = S.probe||{};
+  document.getElementById("info").textContent = `${r.work} · ${p.width}x${p.height} · ${p.fps?p.fps[0]+"/"+p.fps[1]:"?"} fps · ${p.nb_frames} frames · ${(p.duration_s||0).toFixed(2)}s${r.video.present?"":" · NO VIDEO"}`;
+  renderScenes();
+  draw();
+}
+
+function renderScenes() {
+  const el = document.getElementById("scenes");
+  if (!S.scenes) { el.innerHTML = '<em class="dim">no scenes.json yet — run `reh run` first</em>'; return; }
+  el.innerHTML = "<table><tr><th>scene</th><th>t</th><th>frames</th><th>in</th><th>out</th></tr>" +
+    S.scenes.scenes.map(s=>`<tr data-t="${s.t0}"><td>${s.dir}</td><td>${s.t0.toFixed(3)}–${s.t1.toFixed(3)}</td><td>${s.f0}–${s.f1}</td><td>${(S.scenes.cuts.find(c=>c.f===s.f0&&c.source!=="audio")||{}).kind||"start"}</td><td>${(S.scenes.cuts.find(c=>c.f===s.f1+1&&c.source!=="audio")||{}).kind||"end"}</td></tr>`).join("") + "</table>";
+  el.querySelectorAll("tr[data-t]").forEach(tr=>tr.onclick=()=>{ v.currentTime=+tr.dataset.t; });
+}
+
+function W(){ return tl.width; } function H(){ return tl.height; }
+function tToX(t){ return t/(S.probe?S.probe.duration_s:1)*W(); }
+function xToT(x){ return x/W()*(S.probe?S.probe.duration_s:1); }
+
+function draw() {
+  const dpr = devicePixelRatio||1;
+  if (tl.width !== tl.clientWidth*dpr) { tl.width = tl.clientWidth*dpr; tl.height = tl.clientHeight*dpr; }
+  ctx.clearRect(0,0,W(),H());
+  const wfTop = 4*dpr, wfH = H()*0.55;
+  // waveform
+  if (S.waveform && S.waveform.peaks && S.probe) {
+    const n = S.waveform.peaks.length, rate = S.waveform.rate;
+    ctx.fillStyle = "#16324a";
+    for (let i=0;i<n;i++){ const x=i/rate/S.probe.duration_s*W(); const w2=Math.max(1,W()/n); const h=S.waveform.peaks[i]*wfH; ctx.fillRect(x, wfTop+(wfH-h)/2, Math.max(w2*0.8,0.5), h); }
+  }
+  if (!S.probe) return;
+  const mid = wfTop+wfH;
+  // silence shading
+  if (S.waveform) for (const z of S.waveform.silence||[]) { ctx.fillStyle="rgba(120,120,120,.18)"; ctx.fillRect(tToX(z.t0),wfTop, tToX(z.t1)-tToX(z.t0), wfH); }
+  // motion heat strip
+  const stripY = mid+2*dpr, stripH = 8*dpr;
+  ctx.fillStyle="#10151c"; ctx.fillRect(0,stripY,W(),stripH);
+  for (const m of S.motions) { ctx.fillStyle="#1d5c30"; ctx.fillRect(tToX(m.t0), stripY, Math.max(1,tToX(m.t1)-tToX(m.t0)), stripH); }
+  // beats
+  ctx.fillStyle="#666";
+  for (const b of S.beats) ctx.fillRect(tToX(b)-0.5*dpr, stripY+stripH+2, 1*dpr, 6*dpr);
+  // inferred cuts
+  ctx.fillStyle="var(--warn)"; ctx.fillStyle="#f5c542";
+  for (const t of S.inferred) ctx.fillRect(tToX(t)-1*dpr, wfTop, 2*dpr, wfH+stripH+10*dpr);
+  // user cuts
+  ctx.fillStyle="#4da3ff";
+  for (const t of S.cuts) { ctx.fillRect(tToX(t)-1.5*dpr, wfTop-2*dpr, 3*dpr, wfH+stripH+14*dpr); }
+  // playhead
+  ctx.fillStyle="#fff";
+  ctx.fillRect(tToX(v.currentTime), 0, 1*dpr, H());
+  ctx.fillStyle="#8b98a5"; ctx.font=`${10*dpr}px ui-monospace, monospace`;
+  ctx.fillText(`user cuts: ${S.cuts.length}${S.confirmed?" (confirmed)":""}`, 6*dpr, H()-4*dpr);
+}
+
+async function post(cuts, confirmed) {
+  const r = await fetch("/api/cuts", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify({cuts: cuts.map(t=>({t})), confirmed}) }).then(x=>x.json());
+  document.getElementById("msg").textContent = r.ok ? `saved ${r.cuts} cut points → ${r.wrote}` : `error: ${JSON.stringify(r)}`;
+}
+
+function addCut(){ S.cuts = [...S.cuts, v.currentTime].sort((a,b)=>a-b); S.confirmed=false; draw(); }
+function delCut(){
+  if (!S.cuts.length) return;
+  let bi=0, bd=Infinity;
+  S.cuts.forEach((t,i)=>{ const d=Math.abs(t-v.currentTime); if(d<bd){bd=d;bi=i;} });
+  S.cuts.splice(bi,1); S.confirmed=false; draw();
+}
+
+document.getElementById("play").onclick = () => v.paused ? v.play() : v.pause();
+v.onloadedmetadata = () => { document.getElementById("info").textContent += ` · ready`; };
+v.ontimeupdate = tcode;
+document.getElementById("addcut").onclick = addCut;
+document.getElementById("delcut").onclick = delCut;
+document.getElementById("clear").onclick = () => { S.cuts = []; S.confirmed=false; draw(); };
+document.getElementById("save").onclick = () => post(S.cuts, false);
+document.getElementById("lgtm").onclick = () => post(S.cuts, true);
+
+tl.addEventListener("pointerdown", e => {
+  const rect = tl.getBoundingClientRect();
+  v.currentTime = xToT((e.clientX-rect.left) * (tl.width/rect.width));
+});
+
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  const f = frameDur();
+  switch (e.key) {
+    case " ": e.preventDefault(); v.paused?v.play():v.pause(); break;
+    case "ArrowLeft": v.currentTime = Math.max(0, v.currentTime - (e.shiftKey?1:5)); break;
+    case "ArrowRight": v.currentTime = Math.min(S.probe.duration_s, v.currentTime + (e.shiftKey?1:5)); break;
+    case ",": v.currentTime = Math.max(0, v.currentTime - f); break;
+    case ".": v.currentTime = Math.min(S.probe.duration_s, v.currentTime + f); break;
+    case "c": addCut(); break;
+    case "x": delCut(); break;
+    case "s": e.preventDefault(); post(S.cuts, false); break;
+    case "y": post(S.cuts, true); break;
+  }
+});
+addEventListener("resize", draw);
+boot();
+</script>
+</body>
+</html>
