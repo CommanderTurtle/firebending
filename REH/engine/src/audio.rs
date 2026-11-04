@@ -89,10 +89,15 @@ fn pcm(video: &str, rate: u32) -> R<Vec<i16>> {
         ],
     );
     cmd.args(["-loglevel", "quiet"]);
-    let mut child = spawn_stdout_pipe(cmd, "pcm decode")?;
+    let mut spawned = spawn_stdout_pipe(cmd, "pcm decode")?;
     let mut buf = Vec::new();
-    child.stdout.take().expect("pipe").read_to_end(&mut buf)?;
-    crate::ff::drain(child, "pcm decode")?;
+    spawned
+        .child
+        .stdout
+        .take()
+        .expect("pipe")
+        .read_to_end(&mut buf)?;
+    spawned.finish("pcm decode")?;
     Ok(buf
         .chunks_exact(2)
         .map(|b| i16::from_le_bytes([b[0], b[1]]))

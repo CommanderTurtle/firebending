@@ -37,13 +37,55 @@ pub fn run(mut cmd: Command, ctx: &str) -> R<Output> {
 }
 
 /// Runs a command whose stdout is a raw byte stream (e.g. rawvideo/s16le pipes).
-/// Returns the child with piped stdout; caller must drain it before wait().
-pub fn spawn_stdout_pipe(mut cmd: Command, ctx: &str) -> R<std::process::Child> {
+/// stderr is drained on a helper thread so the child can never stall on its log
+/// pipe; returns the child with piped stdout — caller must drain stdout first.
+pub fn spawn_stdout_pipe(mut cmd: Command, ctx: &str) -> R<Spawned> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("{ctx}: spawn failed: {e} (is ffmpeg on PATH?)"))?;
-    Ok(child)
+    let err = child.stderr.take().expect("piped stderr");
+    let owner = ctx.to_string();
+    let handle = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut sink = Vec::new();
+        let mut err = err;
+        let _ = err.read_to_end(&mut sink);
+        if !sink.is_empty() {
+            let text = String::from_utf8_lossy(&sink).into_owned();
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                eprintln!("{owner}: child stderr:\n{trimmed}");
+            }
+        }
+    });
+    Ok(Spawned { child, stderr_drain: Some(handle) })
+}
+
+pub struct Spawned {
+    pub child: std::process::Child,
+    pub stderr_drain: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Spawned {
+    /// After stdout is fully consumed: wait for the child and the log drain.
+    pub fn finish(mut self, ctx: &str) -> R<()> {
+        let out = self
+            .child
+            .wait_with_output()
+            .map_err(|e| format!("{ctx}: wait failed: {e}"))?;
+        if let Some(h) = self.stderr_drain.take() {
+            let _ = h.join();
+        }
+        if !out.status.success() {
+            return Err(bail(format!(
+                "{ctx}: exit {} {}",
+                out.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
 }
 
 pub fn read_exact_stream<R2: Read>(r: &mut R2, buf: &mut [u8]) -> R<usize> {
@@ -58,20 +100,6 @@ pub fn read_exact_stream<R2: Read>(r: &mut R2, buf: &mut [u8]) -> R<usize> {
         }
     }
     Ok(off)
-}
-
-pub fn drain(child: std::process::Child, ctx: &str) -> R<()> {
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("{ctx}: wait failed: {e}"))?;
-    if !out.status.success() {
-        return Err(bail(format!(
-            "{ctx}: exit {} {}",
-            out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
-    }
-    Ok(())
 }
 
 pub fn exe_exists(name: &str) -> bool {
