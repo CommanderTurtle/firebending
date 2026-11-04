@@ -2,7 +2,9 @@ use crate::ff::{ffmpeg, run};
 use crate::util::{ensure_dir, R};
 use std::path::Path;
 
-const CHUNK: usize = 250;
+// ffmpeg's av_expr context stack dies ("Error while parsing expression" + ENOMEM)
+// somewhere in (100,150] chained eq() calls — measured on this exact ffmpeg build.
+const CHUNK: usize = 96;
 
 /// Extracts `frames` (frame numbers, 0-based) as lossless PNGs from the ORIGINAL
 /// video via one ffmpeg select pass per CHUNK frames. Files land as
@@ -19,6 +21,8 @@ pub fn extract(video: &str, frames: &[u64], out: &Path, hwaccel: &str) -> R<()> 
             if k > 0 {
                 expr.push('+');
             }
+            // single `\,` in argv: the filtergraph's option tokenizer keeps it as a
+            // literal comma inside the option value. (Double would end the value early.)
             expr.push_str(&format!("eq(n\\,{f})"));
         }
         let vf = format!("select={expr}");
