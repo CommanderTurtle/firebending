@@ -38,7 +38,9 @@ struct Stream {
     height: Option<u64>,
     #[serde(rename = "avg_frame_rate", default)]
     avg_frame_rate: Option<String>,
-    nb_frames: Option<u64>,
+    // ffprobe emits this as a string in some builds
+    #[serde(default)]
+    nb_frames: serde_json::Value,
     duration: Option<String>,
 }
 
@@ -92,9 +94,14 @@ pub fn probe(video: &Path) -> R<Probe> {
         .and_then(|d| d.parse::<f64>().ok())
         .or_else(|| parsed.format.duration.as_deref().and_then(|d| d.parse::<f64>().ok()))
         .ok_or("no duration")?;
-    let nb_frames = match v.nb_frames {
-        Some(n) if n > 0 => n,
-        _ => {
+    let declared: u64 = v
+        .nb_frames
+        .as_u64()
+        .or_else(|| v.nb_frames.as_str().and_then(|s| s.trim().parse().ok()))
+        .unwrap_or(0);
+    let nb_frames = if declared > 0 {
+        declared
+    } else {
             // count pass fallback (accurate, one decode)
             let cout = run(
                 ffprobe(&[
@@ -109,10 +116,9 @@ pub fn probe(video: &Path) -> R<Probe> {
                 ]),
                 "ffprobe count",
             )?;
-            let s = String::from_utf8_lossy(&cout.stdout).trim().to_string();
-            s.parse()
-                .map_err(|_| format!("frame count produced {s:?}"))?
-        }
+        let s = String::from_utf8_lossy(&cout.stdout).trim().to_string();
+        s.parse()
+            .map_err(|_| format!("frame count produced {s:?}"))?
     };
     Ok(Probe {
         path: video.to_string_lossy().into_owned(),
