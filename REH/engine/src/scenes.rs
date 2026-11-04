@@ -333,6 +333,9 @@ pub fn export(work: &Work) -> R<usize> {
     let mut dirs = 0;
     for (idx, s) in sf.scenes.iter().enumerate() {
         let dir = work.scene_dir(s.i, s.t0);
+        // keep/ is REH-owned: wipe before refill so re-exports across cut changes
+        // never leave frames from the previous boundary set behind
+        let _ = std::fs::remove_dir_all(dir.join("keep"));
         ensure_dir(&dir.join("keep"))?;
         // move this scene's frames in
         for (pos, f) in union.iter().enumerate() {
@@ -521,6 +524,9 @@ fn review(w: &Work) -> R<()> {
     } else {
         build_scenes(w)?
     };
+    let dur = probe::load(w).map(|p| p.duration_s).unwrap_or_else(|_| {
+        sf.cuts.iter().map(|c| c.t).fold(0.0f64, |a, b| a.max(b))
+    });
     let user_cut = exists(&w.cuts_json());
     println!(
         "{} · {}x{} {}/{} fps · {} frames · {:.2}s",
@@ -530,10 +536,7 @@ fn review(w: &Work) -> R<()> {
         sf.fps[0],
         sf.fps[1],
         sf.nb_frames,
-        sf.cuts
-            .iter()
-            .map(|c| c.t)
-            .fold(0.0f64, |a, b| a.max(b))
+        dur
     );
     let active: Vec<&CutRow> = sf
         .cuts

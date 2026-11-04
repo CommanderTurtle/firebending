@@ -222,7 +222,9 @@ console.log(`  daemon: ${DAEMON}${DRY ? "  (dry-run: no HTTP)" : ""}`);
 let done = 0, skipped = 0, failed = 0;
 for (const sc of scenes.scenes) {
   if (!wanted.has("all") && !wanted.has(sc.i)) continue;
-  const sceneDir = join(WORK, sc.dir);
+  // engine writes scenes[].dir as a bare "NN-hhmmss" name; tolerate the
+  // DESIGN.md-documented "scenes/NN-hhmmss" spelling too
+  const sceneDir = join(WORK, sc.dir.startsWith("scenes/") ? sc.dir : join("scenes", sc.dir));
   const descPath = join(sceneDir, "description.md");
   const metaPath = join(sceneDir, "meta.json");
   if (!existsSync(metaPath)) { console.warn(`  scene ${sc.dir}: meta.json missing — rerun 'reh scenes export'`); continue; }
