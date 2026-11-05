@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased - 2026-10-25
+## Unreleased - 2026-11-05
+
+- Added `/v1/bboxset`, `/v1/bboxask` and `/v1/bboxcrop`: name the things to look for, agree on the
+  list before anything is measured, post a picture, and get coordinates per entry plus the picture
+  with the findings drawn on it and an optional cut-out file each (`?format=markdown|json|png`,
+  `?crop=1`, `?pad=`, `?annotate=0`, `?inline=1`).
+- Taught the Jev contract to carry a picture with every state and to answer `box` questions with one
+  coordinate answer per edge, a chosen aggregate and an edge invariant; a framework that asks box
+  questions with no picture is refused instead of answered from text, and a text-only framework
+  sends no `images` key rather than an explicit null.
+- Added `bbox` drawing and `crop` to the one-shot image helper (`annotate.py`) behind the single cold
+  image subprocess in `Perception`; a posted picture is content-hashed once so every entry, the
+  drawing and the cut-outs read one file and share one vision cache key, and only the 32 newest
+  picture files survive.
+- Repaired the JSON slips a model actually makes - a double-encoded tool argument, one object where
+  an array was asked for, a number sent as a string - instead of refusing them, and sent the parse
+  complaint back verbatim for a bounded redraft; a hopeless draft names its reason and leaves the
+  session usable.
+- Stopped a partially-failed look from failing wholesale: an object the model refused now reports no
+  scores at all, where a NaN had broken the JSON writer for the whole answer.
+- Added `optional-mcp/firebending-mcp`: `plan`, `crop`, `view` and sectioned report readers over
+  those routes, returning the drawn picture as an MCP image and letting a cut-out be asked for by an
+  entry's title or number; verified end to end over stdio against a live daemon.
 
 - Added Markdown message, standalone format, one-use file path, multichat,
   delimiter, and check endpoints, with private request/reply lookup.

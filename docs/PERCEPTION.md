@@ -14,6 +14,12 @@ loads a model at daemon startup, on a health check, or while idle.
 | `GET /v1/cereal` | No body | Selected detail; no helper/model started |
 | `POST /v1/ocr` | One image, or literal `0` / `1` | Recognized text, or engine selection acknowledgement |
 | `GET /v1/ocr` | No body | Selected engine; no process/model started |
+| `POST /v1/bboxset` | What to look for, then refinements, literal `Y` / `N`, or an integer 1-8 | The list to look for, or a control acknowledgement |
+| `GET /v1/bboxset` | Optional `?session=name` | Draft, active list, how many entries one picture check covers, turn count; no inference |
+| `POST /v1/bboxask` | One image: bytes, a path, or a data URL | One native request per list entry, the picture with findings drawn on it, optional cut-outs |
+| `GET /v1/bboxask` | Optional `?session=name` | What the next picture would be asked for; no inference |
+| `POST /v1/bboxcrop` | One image plus `?top=&bottom=&left=&right=` or `?boxes=` | Cut-out bytes, or a JSON list of written files; no plan, no model |
+| `GET /v1/bboxcrop` | No body | How to call it; no process started |
 
 ## Setup
 
@@ -132,6 +138,64 @@ For `choice`, the table shows the selected probability **and** native confidence
 modal probability and native confidence. For `noul`, it shows P(true), including
 when false is more likely; native noul has no separate confidence field. None of
 these numbers is calibrated real-world accuracy.
+
+## Looking for named things in a picture
+
+A plan names things; the picture and the coordinates arrive only when a picture is posted. The plan
+carries no image bytes and no numbers, so the list can be read back and agreed with before anything
+is measured.
+
+```sh
+base=http://127.0.0.1:5199
+curl -fsS --data-binary 'Is the 4090 text visible, and where is the Nvidia logo?' "$base/v1/bboxset?session=card"
+curl -fsS --data-binary Y "$base/v1/bboxset?session=card"
+curl -fsS --data-binary /home/me/Pictures/card.png "$base/v1/bboxask?session=card&crop=1"
+```
+
+An integer 1-8 posted to `/v1/bboxset` sets how many of the list one picture check covers, most
+likely to be present first; `N` drops the list, its history and what was running. A draft is one
+`submit_look_plan` tool call whose JSON is repaired up to three times with the parse complaint sent
+back verbatim: a hopeless draft is a `502` naming the last reason, and the session stays usable.
+A double-encoded argument, one object where an array was asked for, and a number sent as a string are
+repaired without costing a retry. Replies are plain prose - no route names, no protocol vocabulary.
+
+Each list entry becomes exactly one native `/v1/systemone` request, serialized inside one lane hold:
+
+| Entry | Questions | Answer |
+| --- | --- | --- |
+| `where` | `box` | a coordinate answer per edge (mode/mean/median, `moved` flag), one chosen aggregate, the box, and the weakest edge |
+| `isdoes` | `presence`, `box` | P(true) for the claim, plus the region of the picture the claim is about |
+
+A `box` answer is refused when an edge disagrees with the box it reports, when `moved` does not match
+`|value - box| > 0`, or when a pair is inverted: that object gets its own `Failed:` line while the
+others still answer. A framework that asks box questions without carrying a picture is refused rather
+than answered from text alone, and a text-only framework sends no `images` key at all instead of an
+explicit null.
+
+Coordinates are fractions of the picture (0 is the top-left corner, 1 the bottom-right); the helper
+accepts pixel counts too and rounds them against the decoded size. The picture is stored once,
+content-hashed into the data directory as `bbox-<hash>.<ext>`, so every entry, the drawing and the
+cut-outs read one file and share one vision-cache key. Only the 32 newest `bbox-*` files survive a
+draw or a cut.
+
+| Control | Effect |
+| --- | --- |
+| `?format=markdown` (default) | The report: one row per located entry, `Failed:` lines, paths for the drawn picture and cut-outs |
+| `?format=json` | `{asked, answered, failed, objects[], picture, annotated, crops[]}`; a failed entry omits its scores instead of writing a number the JSON writer has to name |
+| `?format=png` | The drawn picture as bytes; `annotate=0` is then a `400` |
+| `?crop=1` | One cut-out file per located entry |
+| `?pad=0.05` | Widen every cut-out by that fraction of its own size on each side |
+| `?annotate=0` | Skip the drawing; `annotated` is null |
+| `?inline=1` | Add `image_base64` to `annotated` and to every crop; without it only paths come back, so bytes never enter a conversation unasked |
+
+`/v1/bboxcrop` needs no plan, no model and no lane: coordinates in, bytes out (or a JSON list of
+written files with `?format=json`, up to 8 at once). It heals the same slips in `?boxes=` and
+otherwise names the field and shows what was found.
+
+`optional-mcp/firebending-mcp` exposes these routes as an MCP under plain tool names (`plan`,
+`crop`, `view`, plus sectioned report readers), renders the drawn picture back as an image so the
+client shows it, and remembers the last answer so the next sentence can be "crop the llama logo" or
+"crop 2".
 
 ## Cereal: image → ASCII → Jev
 
