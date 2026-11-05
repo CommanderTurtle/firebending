@@ -96,10 +96,6 @@ function readJson(file, fallback = {}) {
 const TARGETS = {
   omp: {
     file: path.join(ompHome, "mcp.json"),
-    entry() {
-      const settings = readJson(path.join(ompHome, "config.yml"), {});
-      return Boolean(settings.mcp?.enabled ?? true);
-    },
   },
 };
 
@@ -110,6 +106,9 @@ function serverDefinition() {
     args: [serverEntry],
     cwd: REPO_ROOT,
     env: { FIREBENDING_DAEMON_URL: daemonUrl },
+    enabled: true,
+    // A look is one vision-model request per object; no client-side clock should cut it off.
+    timeout: 0,
   };
 }
 
@@ -140,12 +139,9 @@ function apply(target) {
     return;
   }
   if (!existsSync(serverEntry)) throw new Error(`The server entry is missing: ${serverEntry}`);
-  if (!profile.entry()) log(`${target} has MCP switched off in its settings; the entry is written anyway`);
   document.mcpServers[SERVER_NAME] = serverDefinition();
   atomicWrite(file, JSON.stringify(document, null, 2));
-  if (!options.dryRun) {
-    log(`restart ${target} to load the tools`);
-  }
+  if (!options.dryRun) log("restart the client to load the tools; MCP has to be enabled in its settings");
 }
 
 if (options.action !== "status" && !options.dryRun) ensureDirectory(path.dirname(backupRoot));
