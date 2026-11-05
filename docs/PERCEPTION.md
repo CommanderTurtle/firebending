@@ -227,6 +227,28 @@ Use `curl -f` so a pipeline does not mistake an error body for recognized conten
 Cereal is independent of that lane: a busy Jev model does not block local image
 rendering. Each Cereal operation has its own cold helper and bounded deadline.
 
+Measured throughput envelope (2026-11-05, one local single-model NInfer, cache-busted):
+
+| Shape | Decisions/s |
+| --- | ---: |
+| 1 decision per request, serialized, one-line instructions | 11.2 |
+| 4 decisions bundled in one framework, serialized | 21.2 |
+| 1 decision per request, 4-wide fan-out | 18.6 |
+| 5-criterion rubric'd states, 2 questions per request | 3.8 |
+| same, 8-wide or 23-wide | 3.8, and 23-wide drew `429 server_overloaded` on ~1 in 23 |
+
+Cost is prompt-bound, not request-bound: rubric text plus state tokens dominate
+(~0.05s per decision minimal against ~0.27s per decision rubric-heavy), while per-request
+overhead is only ~0.03s. So widen the framework, never the fan-out: bundle every question
+that shares one `state` into one framework (up to the 32-question limit), keep criterion
+rubrics short, and put conditional subtype questions in the same request. Direct clients of
+NInfer should cap fan-out at 4 — `judge_batch(concurrency = 4)`; its default 32
+oversubscribes and draws 429s. This daemon's lane is deliberately 1-wide, so a second
+concurrent decision call returns 429 with `Retry-After: 1` immediately instead of queueing;
+`Inference.request` does replay native 423/429 twice inside the whole deadline, which omp's
+native judge does not (its 4xx fail immediately). Identical `state` + `questions` replay from
+a warm cache in ~0s — bench with a distinguishing state field or you are timing a cache hit.
+
 The routes share the loopback CLI/exact-same-origin guard used by the message
 routes. Request bodies/results are not copied into the legacy request log or
 message history. Only Jev draft/refinement/framework state is retained in memory.

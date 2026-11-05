@@ -14,6 +14,9 @@
 - Corrected OCR channel ordering and Windows foreground HWND width; made a
   disappearing UIA root an explicit fallback rather than a pipeline crash.
 - Added headless HTTP regressions and made the consolidated gate fail fast.
+- Taught the Jev framework prompt to bundle every question that shares one `state`
+  into a single framework, and documented the measured decision-throughput envelope
+  (prompt-bound cost: ~0.05s vs ~0.27s per decision, no gain past 4-wide fan-out).
 
 ## 0.1.0 - 2026-07-16
 
