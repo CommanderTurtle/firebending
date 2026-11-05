@@ -1,0 +1,29 @@
+{
+  "name": "@commanderturtle/firebending-mcp",
+  "version": "1.0.0",
+  "description": "Look for named things in a picture, then cut them out and show them: an MCP for the firebending picture daemon",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "bin": {
+    "firebending": "./bin/firebending.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "scripts",
+    "README.md",
+    "ATTRIBUTION.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "bun ./bin/firebending.js",
+    "configure": "bun ./scripts/configure.mjs"
+  },
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.0",
+    "zod": "4.6.6"
+  }
+}

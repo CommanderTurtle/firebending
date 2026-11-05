@@ -5,3 +5,7 @@ dist/
 config.jsonc
 configs/*.jsonc
 *.log
+
+# The MCP entry point lives in bin/, which the root .gitignore excludes for build output.
+!firebending-mcp/bin/
+!firebending-mcp/bin/**
