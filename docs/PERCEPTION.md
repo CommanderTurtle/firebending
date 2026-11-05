@@ -9,6 +9,7 @@ loads a model at daemon startup, on a health check, or while idle.
 | `POST /v1/jevset` | Task/question, then refinements or literal `Y` / `N` | Validated native SystemOne JSON and save prompt |
 | `GET /v1/jevset` | Optional `?session=name` | Current draft, activated framework and turn count; no inference |
 | `POST /v1/jevask` | One text pipe, JSON string/object/array/null | Results, probabilities, native confidence and full native response |
+| `POST /v1/jevask?batch=1` | JSON array of 1-32 states | One section per state, in order; `502` only when every state failed |
 | `POST /v1/cereal` | One image, or literal `1` / `2` / `3` | Local raster-to-text, or select 32/128/256 detail |
 | `GET /v1/cereal` | No body | Selected detail; no helper/model started |
 | `POST /v1/ocr` | One image, or literal `0` / `1` | Recognized text, or engine selection acknowledgement |
@@ -108,6 +109,23 @@ alias comes from operator configuration/discovery, not user JSON. Use
 `?session=cards&format=json` for the validated native response as JSON instead
 of Markdown. Returned distributions must contain every expected label, sum to
 one and agree with the winning choice/score. Invalid upstream data is an error.
+
+`?batch=1` promotes a JSON array body from one array-rooted state to 1-32 separate
+states. The native endpoint takes exactly one state per request, so a batch is 1-32
+native `/v1/systemone` calls issued **sequentially inside one lane hold**: identical
+decision work, one HTTP round trip, one whole-operation deadline, and no `429`
+pressure on the caller. The cap is 256 decisions per batch (`states x questions`),
+because the batch shares that deadline and cost is prompt-bound (0.05-0.27s per
+decision). Measured on a live local single-model NInfer: 3 states x 2 questions
+answered in 1.94s, while 3 separate asks for the same states took 1.38s — batching
+is caller ergonomics, not a throughput multiplier; framework width and short rubrics
+are the throughput levers. Every state is validated before the first native call, so
+a malformed state is a plain `400` with nothing sent. A state whose answer fails
+envelope validation, or whose native call fails, gets its own `Error: <verbatim
+reason>` section while the others still answer: `200` with `N of M states answered`,
+`502` only when every state failed. Clearing or replacing the framework mid-batch
+discards the whole call with `409`, exactly as for one state. `?format=json` returns
+`{answered, failed, results: [{index, state, result}]}`.
 
 For `choice`, the table shows the selected probability **and** native confidence
 (normalized distribution concentration). For `score`, it shows expected level,

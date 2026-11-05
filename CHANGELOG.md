@@ -17,6 +17,12 @@
 - Taught the Jev framework prompt to bundle every question that shares one `state`
   into a single framework, and documented the measured decision-throughput envelope
   (prompt-bound cost: ~0.05s vs ~0.27s per decision, no gain past 4-wide fan-out).
+- Added `?batch=1` to `/v1/jevask`: 1-32 states in one call, asked sequentially
+  inside one lane hold (256-decision cap), every state validated before the first
+  native request, and per-state failures reported without losing the states that
+  answered. Single-state responses keep their exact previous status and body.
+- Stopped the Jev framework prompt from adding meta questions (self-confidence,
+  certainty, ambiguity); each one was a whole extra decision on every state.
 
 ## 0.1.0 - 2026-07-16
 

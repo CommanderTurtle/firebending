@@ -86,7 +86,7 @@ module Jev =
         value.Clone()
 
     let private message role content = Inference.json {| role = role; content = content |}
-    let private prompt = """Design a read-only /v1/systemone request for the user's classification/scoring task. Return submit_jev_framework with framework_json containing ONE valid JSON object: {"state":"observation supplied later","questions":{"id":{"type":"choice|noul|score","instructions":"...","criteria":...}}}. Use noul for binary propositions: criteria is {"true":"...","false":"..."}, output is P(true), not yes/no prose. Use choice for mutually exclusive identities (such as individual playing cards), criteria maps each label to a description. Use score for 2-10 ordered levels (an array). Include explicit unknown/ambiguous options when warranted. Use 1-32 named questions, 1-255 options per choice; instructions/criterion descriptions accept text, object, array or null. No extra top-level properties or executable tools. The state is replaced by the next jevask input. Follow refinement requests; never activate/save the framework yourself. Never confuse confidence with calibrated accuracy. Shape for throughput: cost is prompt-bound, not request-bound (measured on a local single-model NInfer: ~0.05s per decision with one-line instructions, ~0.27s per decision with 5-criterion rubrics, and fan-out past ~4 concurrent requests buys nothing because the server serializes), so bundle every question that shares one state into this ONE framework — up to the 32-question limit — rather than asking for several sessions or asks, and keep rubrics short. Ask conditional subtype questions in the same request (they share the state's cost) and read them only when the parent answer selects that branch. Identical state + questions replay from a warm cache in ~0s, so a probe state must carry a distinguishing field or it measures a cache hit."""
+    let private prompt = """Design a read-only /v1/systemone request for the user's classification/scoring task. Return submit_jev_framework with framework_json containing ONE valid JSON object: {"state":"observation supplied later","questions":{"id":{"type":"choice|noul|score","instructions":"...","criteria":...}}}. Use noul for binary propositions: criteria is {"true":"...","false":"..."}, output is P(true), not yes/no prose. Use choice for mutually exclusive identities (such as individual playing cards), criteria maps each label to a description. Use score for 2-10 ordered levels (an array). Include explicit unknown/ambiguous options when warranted. Use 1-32 named questions, 1-255 options per choice; instructions/criterion descriptions accept text, object, array or null. No extra top-level properties or executable tools. The state is replaced by the next jevask input. Follow refinement requests; never activate/save the framework yourself. Never confuse confidence with calibrated accuracy. Shape for throughput: cost is prompt-bound, not request-bound (measured on a local single-model NInfer: ~0.05s per decision with one-line instructions, ~0.27s per decision with 5-criterion rubrics, and fan-out past ~4 concurrent requests buys nothing because the server serializes), so bundle every question that shares one state into this ONE framework — up to the 32-question limit — rather than asking for several sessions or asks, and keep rubrics short. Ask conditional subtype questions in the same request (they share the state's cost) and read them only when the parent answer selects that branch. Ask nothing about the judgment itself — no self-confidence, certainty or ambiguity question: the native distributions and the confidence field already carry it, and every extra question is one more decision to pay for on every state. Identical state + questions replay from a warm cache in ~0s, so a probe state must carry a distinguishing field or it measures a cache hit."""
 
     let private canonical modelId state questions = Inference.json {| model = modelId; state = state; questions = questions |}
 
@@ -205,6 +205,46 @@ module Jev =
                     lines.Add($"| {tableText property.Name} | {mean:F6} (modal level {winner}) | {score:F6} | {confidence:F6} |")
         String.concat "\n" lines + "\n\nScores describe the model distribution, not calibrated accuracy.\n\n" + Inference.codeBlock "json" (Json.serialize response)
 
+    /// One line of state identity for batch headings; never a classification.
+    let private preview (value: JsonElement) =
+        let raw = value.GetRawText().Replace("\n", " ").Replace("\r", " ")
+        tableText (if raw.Length <= 72 then raw else raw.Substring(0, 72) + "\u2026")
+
+    /// `?batch=1` promotes a JSON array body from one array-rooted state to N states.
+    let private stateList (raw: string) (isJson: bool) (batch: bool) =
+        if not batch then
+            if isJson then
+                use doc = JsonDocument.Parse(raw)
+                [ doc.RootElement.Clone() ]
+            else [ Inference.json raw ]
+        else
+            if not isJson then Inference.fail 400 "batch=1 sends a JSON array of states; plain text stays one state."
+            use doc = JsonDocument.Parse(raw)
+            if doc.RootElement.ValueKind <> JsonValueKind.Array then
+                Inference.fail 400 "batch=1 needs a JSON array of states; one state needs no batch flag."
+            let items = doc.RootElement.EnumerateArray() |> Seq.toArray
+            if items.Length = 0 then Inference.fail 400 "The batch has no states."
+            if items.Length > 32 then Inference.fail 413 "A batch holds at most 32 states; split it into another request."
+            items |> Array.map (fun item -> item.Clone()) |> Array.toList
+
+    /// The native endpoint takes one state per request, so batch width is decision count.
+    let private budget (stateCount: int) (questions: int) (options: InferenceOptions) =
+        let decisions = stateCount * questions
+        if decisions > 256 then
+            Inference.fail 413 $"A batch holds at most 256 decisions: {stateCount} states x {questions} questions = {decisions}. Split it \u2014 measured 0.05-0.27s per decision against the {options.TimeoutSeconds}s whole-operation deadline."
+
+    /// Per-state result inside a batch: an answer table, a validation verdict about the
+    /// native answer, or a failed native call. Only the last two count as a failure.
+    type private verdict =
+        | Answered of table: string * native: JsonElement
+        | Refused of reason: string
+        | Unreachable of status: int * reason: string
+
+    let private verdictReason = function
+        | Refused reason -> reason
+        | Unreachable(status, reason) -> $"NInfer returned HTTP {status}: {reason}"
+        | Answered _ -> ""
+
     let ask options stopping ctx =
         Inference.run options stopping (fun ct context -> (task {
             let state = session context
@@ -214,23 +254,81 @@ module Jev =
                 if state.Epoch <> epoch then Inference.fail 409 "Jev framework was cleared/replaced while this request was running; the stale result was discarded.")
             let! raw = Inference.readText (1024 * 1024) ct context
             if String.IsNullOrWhiteSpace(raw) then Inference.fail 400 "Supply one text/JSON state; an empty pipe is not an observation."
-            let input =
-                if (string context.Request.ContentType).Contains("json", StringComparison.OrdinalIgnoreCase) then
-                    use doc = JsonDocument.Parse(raw)
-                    doc.RootElement.Clone()
-                else Inference.json raw
-            entry input
+            let batch = string context.Request.Query["batch"] = "1"
+            let items =
+                stateList raw ((string context.Request.ContentType).Contains("json", StringComparison.OrdinalIgnoreCase)) batch
+            let questions = memberValue "questions" framework
+            budget items.Length (questions.EnumerateObject() |> Seq.length) options
             let! modelId = Inference.model options ct
-            let request = canonical modelId input (memberValue "questions" framework) |> validate
+            // Validate every state before the first native call: a bad state is a 400,
+            // never a half-answered batch.
+            let prepared =
+                items |> List.toArray |> Array.indexed
+                |> Array.map (fun (index, input) -> index, input, canonical modelId input questions |> validate)
             ensureCurrent()
-            let! response = Inference.request options "/v1/systemone" (Some request) ct
-            ensureCurrent()
-            let output =
-                try summarize request response
-                with :? ArgumentException -> Inference.fail 502 "Jev returned a malformed answer."
+            let answers = ResizeArray<int * JsonElement * verdict>()
+            for (index, input, request) in prepared do
+                // A cleared/replaced framework aborts the whole call with 409; a per-state
+                // native or validation failure is recorded verbatim and the rest still get asked.
+                let! outcome = task {
+                    let! response = task {
+                        try
+                            let! value = Inference.request options "/v1/systemone" (Some request) ct
+                            ensureCurrent()
+                            return Ok value
+                        with
+                        | PipeFailure(409, message) -> return raise (PipeFailure(409, message))
+                        | PipeFailure(status, message) -> return Error(Unreachable(status, message))
+                    }
+                    match response with
+                    | Error verdict -> return verdict
+                    | Ok value ->
+                        try return Answered(summarize request value, value)
+                        with
+                        | PipeFailure(_, message) -> return Refused message
+                        | :? ArgumentException -> return Refused "Jev returned a malformed answer."
+                }
+                answers.Add((index, input, outcome))
+            let total = answers.Count
+            let failed = answers |> Seq.sumBy (fun (_, _, outcome) -> match outcome with Answered _ -> 0 | _ -> 1)
+            let failedStatus = function
+                | Answered _ -> 200
+                | Unreachable(status, _) -> status
+                | _ -> 502
             if string context.Request.Query["format"] = "json" then
+                let entry = function
+                    | Answered(_, native) -> box native
+                    | Refused reason -> box {| error = reason |}
+                    | Unreachable(status, reason) -> box {| status = status; error = reason |}
+                let payload =
+                    if not batch then entry (match answers[0] with _, _, outcome -> outcome)
+                    else
+                        box {|
+                            answered = total - failed
+                            failed = failed
+                            results =
+                                answers |> Seq.map (fun (index, input, outcome) ->
+                                    box {| index = index; state = input; result = entry outcome |})
+                            |}
+                context.Response.StatusCode <-
+                    if not batch then failedStatus (match answers[0] with _, _, outcome -> outcome)
+                    elif failed = total then 502 else 200
                 context.Response.ContentType <- "application/json; charset=utf-8"
                 context.Response.Headers.CacheControl <- "no-store"
-                do! context.Response.WriteAsync(Json.serialize response, ct)
-            else do! Formatting.write context 200 output
+                do! context.Response.WriteAsync(Json.serialize payload, ct)
+            elif not batch then
+                // Exactly the single-state contract from before batches: answer table, or the
+                // native/validation status with its verbatim reason.
+                match answers[0] with
+                | _, _, Answered(table, _) -> do! Formatting.write context 200 table
+                | _, _, Refused reason -> do! Formatting.write context 502 reason
+                | _, _, Unreachable(status, reason) -> do! Formatting.write context status reason
+            else
+                let mutable body =
+                    sprintf "%d of %d states answered; each state is one native /v1/systemone request inside this one lane hold. Scores describe the model distribution, not calibrated accuracy.\n"
+                        (total - failed) total
+                for (index, input, outcome) in answers do
+                    body <- body + sprintf "\n### State %d/%d \u2014 %s\n\n" (index + 1) total (preview input)
+                    body <- body + (match outcome with Answered(table, _) -> table | _ -> "Error: " + verdictReason outcome + "\n")
+                do! Formatting.write context (if failed = total then 502 else 200) body
         } :> Task)) ctx

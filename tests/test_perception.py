@@ -327,6 +327,129 @@ def test_clear_during_ask_discards_stale_result(bench):
     assert upstream.snapshot() == calls_after_clear
 
 
+def choice_answer(choice, probability, confidence):
+    other = "unknown" if choice == "ace_spades" else "ace_spades"
+    odds = {choice: probability, other: round(1 - probability, 6)}
+    return {
+        "answers": {
+            "card": {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {
+                    "ace_spades": odds["ace_spades"],
+                    "unknown": odds["unknown"],
+                },
+                "confidence": confidence,
+            }
+        }
+    }
+
+
+def test_batch_ask_asks_every_state_in_order_inside_one_hold(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    calls_before = len(upstream.snapshot())
+    upstream.reply(choice_answer("ace_spades", 0.9, 0.8))
+    upstream.reply(choice_answer("unknown", 0.8, 0.7))
+    status, text, _ = api.call(
+        "/v1/jevask" + suffix + "&batch=1", [{"note": "first"}, {"note": "second"}]
+    )
+    assert status == 200
+    assert "2 of 2 states answered" in text
+    assert "### State 1/2" in text and "### State 2/2" in text
+    first, second = text.split("### State 2/2")
+    assert "| card | ace_spades | 0.900000 | 0.800000 |" in first
+    assert "| card | unknown | 0.800000 | 0.700000 |" in second
+    asked = upstream.snapshot()[calls_before:]
+    assert [path for path, _ in asked] == ["/v1/systemone", "/v1/systemone"]
+    assert [body["state"] for _, body in asked] == [
+        {"note": "first"},
+        {"note": "second"},
+    ]
+
+
+def test_batch_ask_json_keeps_per_state_native_answers(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    upstream.reply(choice_answer("ace_spades", 0.9, 0.8))
+    upstream.reply(choice_answer("unknown", 0.8, 0.7))
+    status, text, _ = api.call("/v1/jevask" + suffix + "&batch=1&format=json", ["first", "second"])
+    assert status == 200
+    payload = json.loads(text)
+    assert payload["answered"] == 2 and payload["failed"] == 0
+    assert [item["state"] for item in payload["results"]] == ["first", "second"]
+    assert [item["result"]["answers"]["card"]["choice"] for item in payload["results"]] == [
+        "ace_spades",
+        "unknown",
+    ]
+
+
+def test_batch_ask_marks_failed_states_without_fabricating(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    upstream.reply(choice_answer("ace_spades", 0.9, 0.8))
+    upstream.reply({"answers": {"card": {"type": "noul", "noul": 0.5}}})
+    status, text, _ = api.call("/v1/jevask" + suffix + "&batch=1", ["a", "b"])
+    assert status == 200 and "1 of 2 states answered" in text
+    assert "Error: Jev answer type did not match the framework." in text
+    assert "| card | ace_spades | 0.900000 | 0.800000 |" in text
+
+
+def test_batch_ask_fails_wholly_when_every_state_fails(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    for _ in range(2):
+        upstream.reply({"error": "unavailable"}, status=500)
+    status, text, _ = api.call("/v1/jevask" + suffix + "&batch=1", ["a", "b"])
+    assert status == 502
+    assert text.count("Error: NInfer returned HTTP 502: NInfer /v1/systemone returned HTTP 500") == 2
+
+
+def test_batch_ask_validates_the_batch_before_the_first_native_call(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    calls_before = upstream.snapshot()
+    assert api.call("/v1/jevask" + suffix + "&batch=1", {"note": "object"})[0] == 400
+    assert api.call("/v1/jevask" + suffix + "&batch=1", [])[0] == 400
+    assert api.call("/v1/jevask" + suffix + "&batch=1", list(range(33)))[0] == 413
+    assert api.call("/v1/jevask" + suffix + "&batch=1", "plain text")[0] == 400
+    assert api.call("/v1/jevask" + suffix + "&batch=1", [{"note": "ok"}, 42])[0] == 400
+    assert api.call("/v1/jevask" + suffix + "&batch=1", [True])[0] == 400
+    assert upstream.snapshot() == calls_before
+
+
+def test_batch_ask_caps_the_total_decision_count(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    wide = {
+        "state": "observation supplied later",
+        "questions": {
+            f"q{n}": {"type": "noul", "instructions": "Is the rank legible?"} for n in range(9)
+        },
+    }
+    upstream.reply(draft(wide))
+    assert api.call("/v1/jevset" + suffix, "Nine legibility checks")[0] == 200
+    assert api.call("/v1/jevset" + suffix, "Y")[0] == 200
+    status, text, _ = api.call("/v1/jevask" + suffix + "&batch=1", [str(n) for n in range(32)])
+    assert status == 413 and "at most 256 decisions" in text
+
+
+def test_single_state_ask_shape_is_unchanged(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    activate(api, upstream, suffix)
+    upstream.reply(ANSWER)
+    status, text, _ = api.call("/v1/jevask" + suffix, ART)
+    assert status == 200
+    assert "| card | ace_spades | 0.875000 | 0.750000 |" in text
+    assert "### State" not in text and "states answered" not in text
+
+
 def test_framework_repairs_are_bounded_and_invalid_draft_is_never_saved(bench):
     api, upstream, _ = bench
     suffix = session()
