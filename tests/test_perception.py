@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -76,11 +77,64 @@ def draft(framework=FRAMEWORK):
     return tool("submit_jev_framework", "framework_json", json.dumps(framework))
 
 
+def bbox_plan(objects):
+    return tool("submit_look_plan", "look_json", json.dumps({"objects": objects}))
+
+
+# Protocol fake only. The real renderer and cropper have their own fixtures below.
+FAKE_ONESHOT = """
+import base64, json, os, pathlib, sys, time
+
+prefix = sys.stdin.buffer.read(4)
+operation = sys.argv[sys.argv.index('--operation') + 1] if '--operation' in sys.argv else 'ocr'
+engine = sys.argv[sys.argv.index('--engine') + 1] if '--engine' in sys.argv else None
+if prefix == b'FAIL':
+    print('fixture missing dependency: install OCR extra', file=sys.stderr)
+    raise SystemExit(2)
+if prefix == b'SLOW':
+    with pathlib.Path(os.environ['OCR_FIXTURE_LOG']).open('a') as log:
+        log.write(json.dumps({'pid': os.getpid(), 'engine': engine, 'bytes': 4}) + '\\n')
+    time.sleep(30)
+raw = prefix + sys.stdin.buffer.read()
+with pathlib.Path(os.environ['OCR_FIXTURE_LOG']).open('a') as log:
+    log.write(json.dumps({'pid': os.getpid(), 'engine': engine, 'bytes': len(raw)}) + '\\n')
+if operation in ('bbox', 'crop'):
+    stub = b'\\x89PNG\\r\\n\\x1a\\nfixture'
+    out = sys.argv[sys.argv.index('--out') + 1] if '--out' in sys.argv else None
+    if operation == 'bbox':
+        if out:
+            pathlib.Path(out).write_bytes(stub)
+            print(json.dumps({'text': '1: fixture\\n', 'path': out, 'width': 1280, 'height': 720}))
+        else:
+            print(json.dumps({'text': '1: fixture\\n', 'image_base64': base64.b64encode(stub).decode(),
+                              'width': 1280, 'height': 720}))
+    else:
+        boxes = json.loads(sys.argv[sys.argv.index('--boxes') + 1])
+        crops = []
+        for number, item in enumerate(boxes, start=1):
+            entry = {'name': item.get('name') or '?', 'width': 100 + number, 'height': 50 + number}
+            if out:
+                path = f'{out}-{number}.png'
+                pathlib.Path(path).write_bytes(stub)
+                entry['path'] = path
+            else:
+                entry['image_base64'] = base64.b64encode(stub).decode()
+            crops.append(entry)
+        print(json.dumps({'text': '1: fixture\\n', 'width': 1280, 'height': 720, 'crops': crops}))
+elif operation == 'cereal':
+    level = int(sys.argv[sys.argv.index('--level') + 1])
+    style = sys.argv[sys.argv.index('--style') + 1]
+    print(json.dumps({'text': '  /\\\\  \\n /__\\\\ \\n      \\n', 'level': level, 'style': style, 'trimmed': False}))
+else:
+    print(json.dumps({'text': 'one\\n  two', 'engine': engine}))
+"""
+
+
 class Api:
     def __init__(self, url):
         self.url = url
 
-    def call(self, path, body=None, headers=None, method=None):
+    def call(self, path, body=None, headers=None, method=None, binary=False):
         headers = dict(headers or {})
         if body is not None and not isinstance(body, (str, bytes)):
             body = json.dumps(body).encode()
@@ -94,7 +148,8 @@ class Api:
         except urllib.error.HTTPError as error:
             response = error
         with response:
-            return response.status, response.read().decode(), response.headers
+            raw = response.read()
+            return response.status, raw if binary else raw.decode(), response.headers
 
 
 class FakeNinfer:
@@ -163,29 +218,7 @@ def bench(tmp_path):
     package.mkdir(parents=True)
     (package / "__init__.py").write_text("")
     # Protocol fake only. Renderer mathematics has separate real-code fixtures.
-    (package / "oneshot.py").write_text(
-        "import json, os, pathlib, sys, time\n"
-        "prefix = sys.stdin.buffer.read(4)\n"
-        "operation = sys.argv[sys.argv.index('--operation') + 1] if '--operation' in sys.argv else 'ocr'\n"
-        "engine = sys.argv[sys.argv.index('--engine') + 1] if '--engine' in sys.argv else None\n"
-        "if prefix == b'FAIL':\n"
-        "    print('fixture missing dependency: install OCR extra', file=sys.stderr)\n"
-        "    raise SystemExit(2)\n"
-        "if prefix == b'SLOW':\n"
-        "    with pathlib.Path(os.environ['OCR_FIXTURE_LOG']).open('a') as log:\n"
-        "        log.write(json.dumps({'pid': os.getpid(), 'engine': engine, 'bytes': 4}) + '\\n')\n"
-        "    time.sleep(30)\n"
-        "raw = prefix + sys.stdin.buffer.read()\n"
-        "with pathlib.Path(os.environ['OCR_FIXTURE_LOG']).open('a') as log:\n"
-        "    log.write(json.dumps({'pid': os.getpid(), 'engine': engine, 'bytes': len(raw)}) + '\\n')\n"
-        "if operation == 'cereal':\n"
-        "    level = int(sys.argv[sys.argv.index('--level') + 1])\n"
-        "    style = sys.argv[sys.argv.index('--style') + 1]\n"
-        "    print(json.dumps({'text': '  /\\\\  \\n /__\\\\ \\n      \\n', 'level': level, 'style': style, 'trimmed': False}))\n"
-        "else:\n"
-        "    print(json.dumps({'text': 'one\\n  two', 'engine': engine}))\n",
-        encoding="utf-8",
-    )
+    (package / "oneshot.py").write_text(FAKE_ONESHOT, encoding="utf-8")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -700,3 +733,267 @@ def test_ocr_deadline_kills_and_reaps_child_before_return_then_releases_lane(ben
         "one\n  two",
     )
     assert upstream.snapshot() == []
+
+
+BOX_OBJECTS = [
+    {
+        "name": "GPU badge",
+        "kind": "where",
+        "instructions": "Where is the GPU badge in the picture?",
+    },
+    {
+        "name": "llama logo",
+        "kind": "isdoes",
+        "instructions": "Does the picture contain the llama logo?",
+    },
+]
+
+
+def box_answer(top, bottom, left, right, aggregate="mode"):
+    """One native box answer whose four edges agree with its box, as the wire contract requires."""
+    return {
+        "type": "box",
+        "aggregate": aggregate,
+        "box": {"top": top, "bottom": bottom, "left": left, "right": right},
+        "confidence": 0.5,
+        "edges": {
+            edge: {"probability": 0.4, "modal": value, "mean": value, "median": value, "moved": False}
+            for edge, value in (("top", top), ("bottom", bottom), ("left", left), ("right", right))
+        },
+    }
+
+
+def box_reply(top, bottom, left, right, presence=None, aggregate="mode"):
+    answers = {"box": box_answer(top, bottom, left, right, aggregate)}
+    if presence is not None:
+        answers["presence"] = {"type": "noul", "noul": presence, "confidence": presence}
+    return {"answers": answers}
+
+
+def activate_plan(api, upstream, suffix, objects=BOX_OBJECTS, count=None):
+    if count is not None:
+        assert api.call("/v1/bboxset" + suffix, str(count))[0] == 200
+    upstream.reply(bbox_plan(objects))
+    assert api.call("/v1/bboxset" + suffix, "Find the things in the picture")[0] == 200
+    assert api.call("/v1/bboxset" + suffix, "Y")[0] == 200
+
+
+def picture(tmp_path, name="picture.png"):
+    path = tmp_path / name
+    path.write_bytes(PNG)
+    return str(path)
+
+
+def test_bbox_plan_lists_titles_and_gates_activation(bench, tmp_path):
+    api, upstream, _ = bench
+    suffix = session()
+    assert api.call("/v1/bboxask" + suffix, picture(tmp_path))[0] == 409
+    assert api.call("/v1/bboxset" + suffix, "Y")[0] == 409
+    upstream.reply(bbox_plan(BOX_OBJECTS))
+    status, text, _ = api.call("/v1/bboxset" + suffix, "Find the GPU badge and the llama logo")
+    assert status == 200
+    assert "1: GPU badge (region)" in text
+    assert "2: llama logo (yes/no + region)" in text
+    assert "Y starts looking" in text
+    assert api.call("/v1/bboxask" + suffix, picture(tmp_path))[0] == 409
+    assert '"objects":1' in api.call("/v1/bboxset" + suffix)[1]
+    assert "the first 3 of these" in api.call("/v1/bboxset" + suffix, "3")[1]
+    assert api.call("/v1/bboxset" + suffix, "9")[0] == 400
+    assert api.call("/v1/bboxset" + suffix, "0")[0] == 400
+    status, text, _ = api.call("/v1/bboxset" + suffix, "Y")
+    assert status == 200 and "(the first 2)" in text
+    assert api.call("/v1/bboxset" + suffix, "N")[0] == 200
+    assert api.call("/v1/bboxset" + suffix, "Y")[0] == 409
+    assert api.call("/v1/bboxask" + suffix, picture(tmp_path))[0] == 409
+
+
+def test_bbox_ask_asks_one_state_per_object_with_the_picture(bench, tmp_path):
+    api, upstream, _ = bench
+    suffix = session()
+    source = picture(tmp_path)
+    activate_plan(api, upstream, suffix, count="2")
+    upstream.reply(box_reply(0.69, 0.82, 0.09, 0.32))
+    upstream.reply(box_reply(0.14, 0.63, 0.49, 0.6, presence=0.99))
+    status, text, _ = api.call("/v1/bboxask" + suffix + "&crop=1", source)
+    assert status == 200, text
+    asked = [call for call in upstream.snapshot() if call[0] == "/v1/systemone"]
+    assert len(asked) == 2, "one object is one native request"
+    stored = asked[0][1]["images"]
+    assert stored == asked[1][1]["images"], "one ask reuses one stored picture, so one cache key"
+    assert Path(stored[0]).name.startswith("bbox-") and Path(stored[0]).read_bytes() == PNG
+    assert list(asked[0][1]["questions"]) == ["box"]
+    assert sorted(asked[1][1]["questions"]) == ["box", "presence"]
+    assert "GPU badge" in asked[0][1]["state"] and "llama logo" in asked[1][1]["state"]
+    assert "## What was found in the picture: 2 of 2" in text
+    assert "| 1 | GPU badge | 0.69 | 0.82 | 0.09 | 0.32 | 0.4000 | 0.5000 |" in text
+    assert "| 2 | llama logo | 0.14 | 0.63 | 0.49 | 0.60 | 0.4000 | 0.5000 | 0.9900 |" in text
+    assert "Marked-up picture: " in text and "Cut-out: GPU badge" in text and "Cut-out: llama logo" in text
+    printed = Path(text.split("Marked-up picture: ", 1)[1].split(" (", 1)[0])
+    assert printed.read_bytes().startswith(b"\x89PNG")
+    for line in text.splitlines():
+        if line.startswith("Cut-out: "):
+            assert Path(line.split("\u2192 ", 1)[1].split(" (", 1)[0]).read_bytes().startswith(b"\x89PNG")
+
+
+def test_bbox_ask_json_keeps_the_picture_out_of_context_until_asked(bench, tmp_path):
+    api, upstream, _ = bench
+    suffix = session()
+    source = picture(tmp_path)
+    activate_plan(api, upstream, suffix, count="2")
+    for _ in range(3):
+        upstream.reply(box_reply(0.69, 0.82, 0.09, 0.32))
+        upstream.reply(box_reply(0.14, 0.63, 0.49, 0.6, presence=0.99))
+    status, text, headers = api.call("/v1/bboxask" + suffix + "&format=json&crop=1", source)
+    assert status == 200, text
+    assert headers.get_content_type() == "application/json"
+    report = json.loads(text)
+    assert (report["asked"], report["answered"], report["failed"]) == (2, 2, 0)
+    assert report["objects"][0]["box"] == {"top": 0.69, "bottom": 0.82, "left": 0.09, "right": 0.32}
+    assert report["objects"][0].get("presence") is None
+    assert report["objects"][0].get("confidence") == 0.5
+    assert report["objects"][1]["presence"] == 0.99
+    assert report["objects"][1]["kind"] == "isdoes"
+    stored = Path(report["picture"]["path"])
+    assert stored.is_file() and stored.read_bytes() == PNG, "one canonical copy is what every renderer reads"
+    assert "image_base64" not in report["annotated"], "the marked-up picture is gated, not printed"
+    assert report["annotated"]["width"] == 1280
+    assert len(report["crops"]) == 2 and "image_base64" not in report["crops"][0]
+    status, text, _ = api.call("/v1/bboxask" + suffix + "&format=json&inline=1", source)
+    assert json.loads(text)["annotated"]["image_base64"], "inline=1 opts into the bytes"
+    status, raw, headers = api.call("/v1/bboxask" + suffix + "&format=png", source, binary=True)
+    assert status == 200 and headers.get_content_type() == "image/png"
+    assert raw.startswith(b"\x89PNG"), "format=png returns the box print itself"
+    assert api.call("/v1/bboxask" + suffix + "&format=png&annotate=0", source)[0] == 400
+
+
+def test_bbox_ask_records_a_refused_box_without_fabricating(bench, tmp_path):
+    api, upstream, _ = bench
+    suffix = session()
+    source = picture(tmp_path)
+    activate_plan(api, upstream, suffix, count="2")
+    upstream.reply(box_reply(0.9, 0.2, 0.1, 0.5))  # an inverted box the native side never returns
+    upstream.reply(box_reply(0.14, 0.63, 0.49, 0.6, presence=0.99))
+    status, text, _ = api.call("/v1/bboxask" + suffix + "&format=json", source)
+    assert status == 200, text
+    report = json.loads(text)
+    assert (report["answered"], report["failed"]) == (1, 1)
+    assert "inverted" in report["objects"][0]["error"]
+    assert "Failed: 1: GPU badge" in api.call("/v1/bboxask" + suffix, source)[1]
+    assert report["objects"][1]["box"]["left"] == 0.49
+
+
+def test_bbox_control_setting_limits_the_titles_asked(bench, tmp_path):
+    api, upstream, _ = bench
+    suffix = session()
+    source = picture(tmp_path)
+    activate_plan(api, upstream, suffix, count="1")
+    upstream.reply(box_reply(0.69, 0.82, 0.09, 0.32))
+    status, text, _ = api.call("/v1/bboxask" + suffix, source)
+    assert status == 200, text
+    assert [call for call in upstream.snapshot() if call[0] == "/v1/systemone"].__len__() == 1
+    assert "## What was found in the picture: 1 of 1" in text
+
+
+def test_box_frameworks_carry_the_picture_with_every_state(bench, tmp_path):
+    api, upstream, _ = bench
+    suffix = session()
+    source = picture(tmp_path)
+    framework = {
+        "state": "observation supplied later",
+        "images": [source],
+        "questions": {"where4090": {"type": "box", "instructions": "Where are the digits 4090?"}},
+    }
+    upstream.reply(draft(framework))
+    assert api.call("/v1/jevset" + suffix, "Where are the digits 4090?")[0] == 200
+    assert api.call("/v1/jevset" + suffix, "Y")[0] == 200
+    upstream.reply({"answers": {"where4090": box_answer(0.69, 0.82, 0.09, 0.32)}})
+    upstream.reply({"answers": {"where4090": box_answer(0.1, 0.3, 0.2, 0.5)}})
+    status, text, _ = api.call("/v1/jevask" + suffix + "&batch=1", ["first picture", "second picture"])
+    assert status == 200, text
+    asked = [call for call in upstream.snapshot() if call[0] == "/v1/systemone"]
+    assert len(asked) == 2
+    assert [call[1]["images"] for call in asked] == [[source], [source]]
+    assert [call[1]["state"] for call in asked] == ["first picture", "second picture"]
+    assert "as mode" in text
+    # A framework with no picture sends no images key at all, never an explicit null.
+    other = session()
+    upstream.reply(draft())
+    assert api.call("/v1/jevset" + other, "Identify playing cards")[0] == 200
+    assert api.call("/v1/jevset" + other, "Y")[0] == 200
+    upstream.reply(ANSWER)
+    assert api.call("/v1/jevask" + other, ART)[0] == 200
+    assert "images" not in [call for call in upstream.snapshot() if call[0] == "/v1/systemone"][-1][1]
+
+
+def test_box_questions_are_refused_without_a_picture(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    framework = {
+        "state": "observation supplied later",
+        "questions": {"where4090": {"type": "box", "instructions": "Where are the digits 4090?"}},
+    }
+    for _ in range(3):
+        upstream.reply(draft(framework))
+    status, text, _ = api.call("/v1/jevset" + suffix, "Where are the digits 4090?")
+    assert status == 502
+    assert "send images" in text
+    assert len([call for call in upstream.snapshot() if call[0] == "/v1/chat/completions"]) == 3
+
+
+def test_bboxcrop_crops_by_fraction_and_pixels(bench, tmp_path):
+    api, _, _ = bench
+    source = picture(tmp_path)
+    boxes = json.dumps([{"name": "cta", "box": {"top": 0.68, "bottom": 0.82, "left": 0.09, "right": 0.32}}])
+    status, text, _ = api.call(
+        f"/v1/bboxcrop?format=json&pad=0.05&boxes={urllib.parse.quote(boxes, safe='')}", source
+    )
+    assert status == 200, text
+    report = json.loads(text)
+    assert report["cropped"] == 1 and report["pad"] == 0.05
+    crop = Path(report["crops"][0]["path"])
+    assert crop.exists() and crop.read_bytes().startswith(b"\x89PNG")
+    assert "image_base64" not in report["crops"][0]
+    # The slips a model actually makes are repaired, not refused: one object where an array was
+    # asked for, a coordinate written as a string.
+    single = urllib.parse.quote('{"name": "cta", "box": {"top": 0.68, "bottom": 0.82, "left": "0.09", "right": 0.32}}', safe="")
+    status, text, _ = api.call(f"/v1/bboxcrop?format=json&boxes={single}", source)
+    assert status == 200, text
+    assert json.loads(text)["cropped"] == 1
+    # What is left over names the field and what was wrong with it.
+    partial = urllib.parse.quote('{"box": {"bottom": 1, "left": 0, "right": 0}}', safe="")
+    assert "top is missing" in api.call(f"/v1/bboxcrop?format=json&boxes={partial}", source)[1]
+    nonsense = urllib.parse.quote(json.dumps([{"box": {"top": "x", "bottom": 1, "left": 0, "right": 0}}]), safe="")
+    assert "top must be a fraction" in api.call(f"/v1/bboxcrop?format=json&boxes={nonsense}", source)[1]
+    status, _, headers = api.call(
+        "/v1/bboxcrop?top=496&bottom=590&left=115&right=410&name=pixels", source, binary=True
+    )
+    assert status == 200 and headers.get_content_type() == "image/png"
+    assert api.call("/v1/bboxcrop?top=abc&bottom=0.8&left=0.1&right=0.3", source)[0] == 400
+    assert api.call("/v1/bboxcrop?boxes=notjson", source)[0] == 400
+    assert "boxes names no object" in api.call("/v1/bboxcrop?boxes=%5B%5D", source)[1]
+
+
+def test_a_broken_draft_is_reprompted_not_refused(bench):
+    """The model's own broken JSON costs a reprompt, not a failed request."""
+    api, upstream, _ = bench
+    upstream.reply(tool("submit_look_plan", "look_json", '{"objects": [{"name": "GPU badge"'))
+    upstream.reply(bbox_plan(BOX_OBJECTS))
+    status, text, _ = api.call("/v1/bboxset" + session(), "Find the GPU badge and the llama logo")
+    assert status == 200, text
+    assert "1: GPU badge (region)" in text
+    drafting = [call for call in upstream.snapshot() if call[0] == "/v1/chat/completions"]
+    assert len(drafting) == 2, "the second attempt carries the complaint about the first"
+    assert "not valid JSON" in json.dumps(drafting[1][1])
+
+
+def test_a_hopeless_draft_fails_without_losing_the_session(bench):
+    api, upstream, _ = bench
+    suffix = session()
+    for _ in range(3):
+        upstream.reply(tool("submit_look_plan", "look_json", "{}"))
+    status, text, _ = api.call("/v1/bboxset" + suffix, "Find the things in the picture")
+    assert status == 502, text
+    assert "three attempts" in text
+    assert api.call("/v1/bboxset" + suffix, "Y")[0] == 409
+    upstream.reply(bbox_plan(BOX_OBJECTS))
+    assert api.call("/v1/bboxset" + suffix, "Find the GPU badge")[0] == 200

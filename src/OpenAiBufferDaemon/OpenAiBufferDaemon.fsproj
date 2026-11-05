@@ -17,6 +17,7 @@
     <Compile Include="Inference.fs" />
     <Compile Include="Jev.fs" />
     <Compile Include="Perception.fs" />
+    <Compile Include="Bbox.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

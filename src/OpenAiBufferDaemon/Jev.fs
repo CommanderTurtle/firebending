@@ -46,11 +46,18 @@ module Jev =
 
     /// Mirrors the native SystemOne wire contract; validation does not run inference.
     let validate (value: JsonElement) =
-        keys [ "state"; "questions"; "model" ] value
+        keys [ "state"; "questions"; "model"; "images" ] value
         entry (memberValue "state" value)
         match Helpers.tryGetProperty "model" value with
         | Some model -> require (model.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(model.GetString()))) "model must be a nonempty string."
         | None -> ()
+        // Absent means no images; an explicit null is not a list on the native wire.
+        match Helpers.tryGetProperty "images" value with
+        | None -> ()
+        | Some sources ->
+            require (sources.ValueKind = JsonValueKind.Array && sources.GetArrayLength() <= 8) "images must be an array of up to 8 image sources."
+            for source in sources.EnumerateArray() do
+                require (source.ValueKind = JsonValueKind.String && not (String.IsNullOrWhiteSpace(source.GetString()))) "Each image source must be a nonempty local path or data: URL."
         let questions = memberValue "questions" value
         require (questions.ValueKind = JsonValueKind.Object) "questions must be an object."
         let properties = questions.EnumerateObject() |> Seq.toArray
@@ -81,14 +88,40 @@ module Jev =
                 let criteria = memberValue "criteria" question
                 require (criteria.ValueKind = JsonValueKind.Array && criteria.GetArrayLength() >= 2 && criteria.GetArrayLength() <= 10) "Score criteria must be 2-10 ordered descriptions."
                 for option in criteria.EnumerateArray() do entry option
-            | _ -> invalidArg "framework" "Question type must be choice, noul or score."
+            | "box" ->
+                // Four independently scored grid coordinates; the picture rides in top-level images.
+                match Helpers.tryGetProperty "images" value with
+                | Some sources when sources.ValueKind = JsonValueKind.Array && sources.GetArrayLength() > 0 -> ()
+                | _ -> invalidArg "framework" "box questions are asked of an image: send images."
+                match Helpers.tryGetProperty "criteria" question with
+                | None -> ()
+                | Some criteria when criteria.ValueKind = JsonValueKind.Null -> ()
+                | Some criteria ->
+                    keys [ "step"; "aggregate" ] criteria
+                    match Helpers.tryGetProperty "step" criteria with
+                    | None -> ()
+                    | Some step ->
+                        let mutable number = 0.0
+                        require (step.ValueKind = JsonValueKind.Number && step.TryGetDouble(&number) && Double.IsFinite number && number > 0.0 && number <= 1.0)
+                            "box step must be a number greater than 0 and at most 1."
+                    match Helpers.tryGetProperty "aggregate" criteria with
+                    | None -> ()
+                    | Some aggregate ->
+                        require (aggregate.ValueKind = JsonValueKind.String && List.contains (aggregate.GetString()) [ "mode"; "mean"; "median" ])
+                            "box aggregate must be mode, mean or median."
+            | _ -> invalidArg "framework" "Question type must be choice, noul, score or box."
         require (Encoding.UTF8.GetByteCount(value.GetRawText()) <= 1024 * 1024) "Framework exceeds the 1 MiB SystemOne limit."
         value.Clone()
 
     let private message role content = Inference.json {| role = role; content = content |}
-    let private prompt = """Design a read-only /v1/systemone request for the user's classification/scoring task. Return submit_jev_framework with framework_json containing ONE valid JSON object: {"state":"observation supplied later","questions":{"id":{"type":"choice|noul|score","instructions":"...","criteria":...}}}. Use noul for binary propositions: criteria is {"true":"...","false":"..."}, output is P(true), not yes/no prose. Use choice for mutually exclusive identities (such as individual playing cards), criteria maps each label to a description. Use score for 2-10 ordered levels (an array). Include explicit unknown/ambiguous options when warranted. Use 1-32 named questions, 1-255 options per choice; instructions/criterion descriptions accept text, object, array or null. No extra top-level properties or executable tools. The state is replaced by the next jevask input. Follow refinement requests; never activate/save the framework yourself. Never confuse confidence with calibrated accuracy. Shape for throughput: cost is prompt-bound, not request-bound (measured on a local single-model NInfer: ~0.05s per decision with one-line instructions, ~0.27s per decision with 5-criterion rubrics, and fan-out past ~4 concurrent requests buys nothing because the server serializes), so bundle every question that shares one state into this ONE framework — up to the 32-question limit — rather than asking for several sessions or asks, and keep rubrics short. Ask conditional subtype questions in the same request (they share the state's cost) and read them only when the parent answer selects that branch. Ask nothing about the judgment itself — no self-confidence, certainty or ambiguity question: the native distributions and the confidence field already carry it, and every extra question is one more decision to pay for on every state. Identical state + questions replay from a warm cache in ~0s, so a probe state must carry a distinguishing field or it measures a cache hit."""
+    let private prompt = """Design a read-only /v1/systemone request for the user's classification/scoring task. Return submit_jev_framework with framework_json containing ONE valid JSON object: {"state":"observation supplied later","questions":{"id":{"type":"choice|noul|score|box","instructions":"...","criteria":...}}}. Use noul for binary propositions: criteria is {"true":"...","false":"..."}, output is P(true), not yes/no prose. Use choice for mutually exclusive identities (such as individual playing cards), criteria maps each label to a description. Use score for 2-10 ordered levels (an array). Use box for where-in-the-picture questions: the request then needs top-level "images" with 1-8 local image paths or data: URLs, and criteria is optional, {"step":0.01,"aggregate":"mode|mean|median"} (mode answers the peak grid point, mean/median the distribution). Include explicit unknown/ambiguous options when warranted. Use 1-32 named questions, 1-255 options per choice; instructions/criterion descriptions accept text, object, array or null. No extra top-level properties or executable tools. The state is replaced by the next jevask input. Follow refinement requests; never activate/save the framework yourself. Never confuse confidence with calibrated accuracy. Shape for throughput: cost is prompt-bound, not request-bound (measured on a local single-model NInfer: ~0.05s per decision with one-line instructions, ~0.27s per decision with 5-criterion rubrics, and fan-out past ~4 concurrent requests buys nothing because the server serializes), so bundle every question that shares one state into this ONE framework — up to the 32-question limit — rather than asking for several sessions or asks, and keep rubrics short. Ask conditional subtype questions in the same request (they share the state's cost) and read them only when the parent answer selects that branch. Ask nothing about the judgment itself — no self-confidence, certainty or ambiguity question: the native distributions and the confidence field already carry it, and every extra question is one more decision to pay for on every state. Identical state + questions replay from a warm cache in ~0s, so a probe state must carry a distinguishing field or it measures a cache hit."""
 
-    let private canonical modelId state questions = Inference.json {| model = modelId; state = state; questions = questions |}
+    /// The picture rides with every state built from this framework; the native wire has no images key at all
+    /// when the framework has none, because an explicit null is not a list.
+    let private canonical modelId state questions (framework: JsonElement) =
+        match Helpers.tryGetProperty "images" framework with
+        | Some sources -> Inference.json {| model = modelId; state = state; questions = questions; images = sources |}
+        | None -> Inference.json {| model = modelId; state = state; questions = questions |}
 
     let set options stopping (ctx: HttpContext) =
         Inference.runUnlocked options stopping (fun ct context -> (task {
@@ -137,7 +170,7 @@ module Jev =
                                 let! serialized = Inference.submitTool options modelId "submit_jev_framework" "Return the complete SystemOne framework as JSON text." "framework_json" messages ct
                                 use doc = JsonDocument.Parse(serialized)
                                 let value = validate doc.RootElement
-                                candidate <- Some(canonical modelId (memberValue "state" value) (memberValue "questions" value))
+                                candidate <- Some(canonical modelId (memberValue "state" value) (memberValue "questions" value) value)
                             with
                             | :? ArgumentException as ex -> error <- ex.Message
                             | :? JsonException -> error <- "The framework or tool arguments were not valid JSON."
@@ -180,6 +213,60 @@ module Jev =
             if kind = "noul" then
                 let yes = memberValue "noul" answer |> probability
                 lines.Add($"| {tableText property.Name} | P(true) | {yes:F6} | n/a |")
+            elif kind = "box" then
+                let allowed = [ "type"; "aggregate"; "box"; "confidence"; "edges" ]
+                if fields |> Array.exists (fun name -> not (List.contains name allowed)) then
+                    Inference.fail 502 "Jev box answer has unsupported members."
+                let aggregate = memberValue "aggregate" answer |> Inference.stringValue
+                if not (List.contains aggregate [ "mode"; "mean"; "median" ]) then
+                    Inference.fail 502 "Jev box answer used an unknown aggregate."
+                let box = memberValue "box" answer
+                if box.ValueKind <> JsonValueKind.Object || (box.EnumerateObject() |> Seq.toArray).Length <> 4 then
+                    Inference.fail 502 "Jev box answer needs exactly four coordinates."
+                let coordinate name =
+                    match Helpers.tryGetProperty name box with
+                    | Some value ->
+                        let mutable number = 0.0
+                        if value.ValueKind <> JsonValueKind.Number || not (value.TryGetDouble(&number)) || not (Double.IsFinite number) || number < 0.0 || number > 1.0 then
+                            Inference.fail 502 $"Jev returned an invalid {name} coordinate."
+                        number
+                    | None -> Inference.fail 502 "Jev box answer is missing a coordinate."
+                let top, bottom, left, right = coordinate "top", coordinate "bottom", coordinate "left", coordinate "right"
+                if top > bottom || left > right then Inference.fail 502 "Jev returned an inverted box."
+                let edges = memberValue "edges" answer
+                if edges.ValueKind <> JsonValueKind.Object then Inference.fail 502 "Jev returned no edge distributions."
+                // Every edge is scored on its own and the native side only ever sorts a pair; it never
+                // re-reads a coordinate, so each answer must equal its own grid summary or be the sort.
+                let chosen = ResizeArray<float>()
+                let mutable weakest = 1.0
+                for name in [ "top"; "bottom"; "left"; "right" ] do
+                    let summary = memberValue name edges
+                    if summary.ValueKind <> JsonValueKind.Object then Inference.fail 502 $"Jev returned no {name} distribution."
+                    let grid = if aggregate = "mode" then "modal" elif aggregate = "mean" then "mean" else "median"
+                    let value = memberValue grid summary
+                    let mutable number = 0.0
+                    if value.ValueKind <> JsonValueKind.Number || not (value.TryGetDouble(&number)) || number < 0.0 || number > 1.0 then
+                        Inference.fail 502 $"Jev returned an invalid {name} distribution summary."
+                    weakest <- min weakest (memberValue "probability" summary |> probability)
+                    let moved =
+                        match Helpers.tryGetProperty "moved" summary with
+                        | Some flag when flag.ValueKind = JsonValueKind.True -> true
+                        | Some flag when flag.ValueKind = JsonValueKind.False -> false
+                        | _ -> Inference.fail 502 $"Jev returned no {name} moved flag."
+                    let answered =
+                        match name with
+                        | "top" -> top | "bottom" -> bottom | "left" -> left | _ -> right
+                    if moved <> (abs (number - answered) > 1e-9) then
+                        Inference.fail 502 $"Jev box {name} did not match its edge distribution."
+                    chosen.Add number
+                let pair (a: float) (b: float) (low: float) (high: float) =
+                    let sorted = Array.sort [| a; b |]
+                    abs (low - sorted[0]) <= 1e-9 && abs (high - sorted[1]) <= 1e-9
+                let values = chosen.ToArray()
+                if not (pair values[0] values[1] top bottom) || not (pair values[2] values[3] left right) then
+                    Inference.fail 502 "Jev box coordinates did not match its edge distributions."
+                let confidence = memberValue "confidence" answer |> probability
+                lines.Add($"| {tableText property.Name} | top {top:F2} bottom {bottom:F2} left {left:F2} right {right:F2} as {aggregate} | {weakest:F6} | {confidence:F6} |")
             else
                 let probabilities = memberValue "probabilities" answer
                 if probabilities.ValueKind <> JsonValueKind.Object then Inference.fail 502 "Jev returned no distribution."
@@ -264,7 +351,7 @@ module Jev =
             // never a half-answered batch.
             let prepared =
                 items |> List.toArray |> Array.indexed
-                |> Array.map (fun (index, input) -> index, input, canonical modelId input questions |> validate)
+                |> Array.map (fun (index, input) -> index, input, canonical modelId input questions framework |> validate)
             ensureCurrent()
             let answers = ResizeArray<int * JsonElement * verdict>()
             for (index, input, request) in prepared do

@@ -13,7 +13,9 @@ module Perception =
     let mutable private ocrEngine = 0
     let mutable private cerealLevel = 1
 
-    let private runImageHelper options (arguments: string list) (bytes: byte[]) (ct: CancellationToken) = task {
+    /// The one cold image subprocess: bytes in, one JSON result out. Bbox reuses it for its box
+    /// prints and crops, so the pipe limits and helper installation error live in one place.
+    let runImageHelper options (arguments: string list) (bytes: byte[]) (ct: CancellationToken) = task {
         let info = ProcessStartInfo()
         info.FileName <- options.OcrPython
         info.UseShellExecute <- false
