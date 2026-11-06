@@ -26,21 +26,29 @@ what it will measure.
 5. `getmouse {}` asks one fixed question, sent unchanged - "Where is the box of coordinates? If it
    exists, it's beside either a crosshair or mouse" - about the picture the last look read, then prints
    each thing it had found by how far its centre sits from the pointer's centre, in pixels:
-   `2: Green button, -400i+50j`, with `i` across and `j` downward. The pointer is the coordinate tag's
-   top-left corner, because the overlay draws that tag below and to the right of the cursor whose
-   numbers it prints, so the reply prints the corner (`Mouse:`) and the tag it was read from
-   (`Coordinate tag:`). One model request, one box, nothing drawn, no picture back - the marked-up view
-   of a pointer is a person's, seen through the command line, never handed to the model. It only works
-   after a look, because that is what cached both the objects and the picture's pixel size. It replaces
-   the list the picture pipeline is looking for, so re-confirm your own list afterwards.
-   Why the tag rather than the cursor: on a screenshot whose crosshair was then located pixel by pixel,
-   asking for the crosshair itself landed 136-143 px off over six runs, always on the same wrong
-   cluster - the "Was this helpful?" row and the `ESC`/`PrSc` keycaps, about 140 px above the thin grey
-   `+` - while claiming 68-88% confidence, and a second look through a crop of that window answered the
-   middle of the crop every single time. Asking for the tag lands 100 px out on that picture at 28%
-   confidence, with its left and right edges within 8 px of the real tag: a box of text, in the right
-   column, about 135 px too high. So read the confidence, and treat `t == b` as the sign that it
-   answered a line rather than a box.
+   `2: Green button, -400i+50j`, with `i` across and `j` downward. The pointer is read out of the
+   coordinate tag's geometry: the overlay draws that plate at a fixed margin below and right of the
+   cursor whose numbers it prints, so the cursor is the plate's top-left corner shifted up-left by
+   `-28i-31j` - measured two ways on one screenshot, at (-34.5, -37.5) from the corner against a mark
+   located pixel by pixel, and independently as `-100i+50j` from the plate's centre, which is the same
+   point on a 155x50 plate. Both are written here in the print's own frame, i across and j downward, so
+   a negative j means up; the circle placer counts j upward and the sign flips at that boundary, which
+   is why `561i-165j` goes into it as `585@561i+165j`. The corner rather than the centre, because the
+   plate grows with the digits it prints. The reply prints the pointer (`Mouse:`) and the plate it was
+   read from (`Coordinate tag:`). One model
+   request, one box, nothing drawn, no picture back - the marked-up view of a pointer is a person's,
+   seen through the command line, never handed to the model. It only works after a look, because that
+   is what cached both the objects and the picture's pixel size. It replaces the list the picture
+   pipeline is looking for, so re-confirm your own list afterwards.
+   Why the tag rather than the cursor: on that same screenshot, asking for the crosshair itself landed
+   136-143 px off over six runs, always on the same wrong cluster - the "Was this helpful?" row and the
+   `ESC`/`PrSc` keycaps, about 140 px above the thin grey `+` - while claiming 68-88% confidence, and a
+   second look through a crop of that window answered the middle of the crop every single time. Asking
+   for the tag puts its left and right edges within 3-8 px of the real plate, twice running, at 28-37%
+   confidence. Its vertical edge is the unresolved half: the box arrives 135-170 px too high, so the
+   up-left inset, worth about 10-17 px against a correct box, reads worse today (163 px, against 134 px
+   unshifted) while the horizontal error stays under 10 px. Read the confidence and the `t == b` tell;
+   the shift pays the moment the box does.
 6. `move { object: "2" }` and `clickreturn { object: "2" }` carry that printed vector to the Macrohelp
    overlay through the overlay's own MCP: open its circle placer, feed the vector, press one key at
    the end. `move` leaves the pointer standing on the thing; `clickreturn` clicks it and blinks the

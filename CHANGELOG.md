@@ -42,6 +42,15 @@
   confidence, its left and right edges within 8 px of the real tag - a box of text in the right column,
   about 135 px too high. Both numbers are in the guide, so a driver reads the confidence and the `t ==
   b` tell rather than trusting the score.
+- Put the overlay's plate layout into the arithmetic rather than into any picture: the coordinate tag is
+  drawn at a fixed margin below and right of the cursor whose numbers it prints, so the cursor is that
+  plate's top-left corner shifted up-left by `-28i-31j` - measured at (-34.5, -37.5) from the corner
+  against a mark located pixel by pixel, and independently at (-100, -50) from the plate's centre, the
+  same point on a 155x50 plate. The corner and not the centre, because the plate widens with the digits
+  it prints; only the position moves, never the size, so the vectors stay centre-to-centre. Worth 10-17
+  px against a correct box; on the answers measured so far the plate's box arrives 135-170 px too high,
+  so the shift reads worse today (163 px against 134 px unshifted) while the horizontal error holds
+  under 10 px. Geometry first, and it pays the moment the vertical does.
 - Made the look's text the result: `plan { confirm }` no longer draws the findings over the picture or
   attaches it (`show: true` asks for it, and the drawing pass is skipped when it is not), and the
   printed line that named the drawn file now names the picture itself so `view` still has something to
