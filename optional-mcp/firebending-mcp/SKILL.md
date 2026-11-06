@@ -32,12 +32,14 @@ what it will measure.
    re-confirm your own list afterwards.
    Backing that reply are two inferences, and the driver sees neither of them separately. The first
    answer sizes a window out of its own weakest edge - the less sure it is, the wider the patch - crops
-   that patch out of the picture, and asks the second question, "Where is center of the crosshair, or
-   tip of the mouse, in this image?", about the crop alone. A coordinate measured over a patch is finer
-   than the same coordinate measured over a screen, so the answer is scaled and shifted back into the
-   picture and that box becomes the pointer. The crop is temporary. The structured answer keeps both
-   passes: `passes`, `refined`, the window, the crop file, the box as the crop reported it, and which
-   edge of the crop it pressed against.
+   that patch out of the picture, magnifies it to about 1400 pixels across, and asks the second
+   question, "Where is center of the crosshair, or tip of the mouse, in this image?", about the crop
+   alone. A coordinate measured over a magnified patch is finer than the same coordinate measured over
+   a screen - each decimal of the answer is worth four times fewer of the original's pixels at ×4 - so
+   the answer is scaled and shifted back into the picture and that box becomes the pointer. The crop is
+   temporary. The structured answer keeps both passes: `passes`, `refined`, the window, the crop file,
+   the `scale` it was grown by, the box as the crop reported it, and which edge of the crop it pressed
+   against.
    What that is worth was measured, over four probes of a screenshot whose crosshair was then found
    pixel by pixel: when the second look returns an extent (`t 0.51, b 0.91` - it saw a tall mark), the
    pointer lands about half as far off; when it returns a point in the dead middle of the crop
@@ -45,7 +47,11 @@ what it will measure.
    the answer worse, and a point in the middle of the crop with `weakest_edge` near zero is the tell
    that the pointer is only as good as the first guess. Across that same image the sideways answer
    tightened from 954 px to 970 px against a measured 970.5 px, because the first pass had quantized
-   that axis to two decimals and the crop let it be measured again.
+   that axis to two decimals and the crop let it be measured again. Growing that crop further was
+   measured as well - three passes at ×2, patches of 1516 to 1764 px cut from windows of 758 to 882 px:
+   `0.51` in the middle every time, `(968.8, 381.5)`, `(970.0, 382.0)`, `(969.9, 385.5)`, still 139 to
+   143 px from the mark, the same place the un-magnified crop gave. More pixels sharpen an answer the
+   model can see; they cannot move one it is reading out of the patch's own centre.
 
 One list entry is one request to the model, taken one at a time. A thing the model refuses to locate
 gets its own "not found" line and no coordinates at all, while the others still answer. Coordinates

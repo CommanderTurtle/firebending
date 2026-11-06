@@ -530,6 +530,14 @@ export function buildServer() {
       pointer.reason = "no pixel size was cached with the picture, so there is nothing to crop by";
     } else {
       const window = pointerWindow(coarse.box, coarse.weakest_edge, width, height);
+      const across = window.right - window.left;
+      const down = window.bottom - window.top;
+      const native = [Math.round(across * width), Math.round(down * height)];
+      // More pixels over the same ground. The answer comes back as a fraction of the picture it was
+      // measured over, so measuring it over a magnified crop rather than the whole screen makes every
+      // decimal of it worth this many times fewer of the original's pixels. Nothing is drawn, and the
+      // fraction maps back exactly as it did before.
+      const scale = Math.max(1, Math.min(4, Math.round(1400 / Math.max(native[0], native[1]))));
       const cut = JSON.parse((await daemon.cut(image, {
         name: "pointer",
         top: window.top,
@@ -537,14 +545,16 @@ export function buildServer() {
         left: window.left,
         right: window.right,
         pad: 0,
+        scale,
         format: "json",
       }, context.signal)).text());
       const crop = (cut.crops || [])[0];
-      const across = window.right - window.left;
-      const down = window.bottom - window.top;
       if (!crop?.path) {
         pointer.reason = "the crop came back empty";
-      } else if (Math.abs(crop.width - across * width) > 2 || Math.abs(crop.height - down * height) > 2) {
+      } else if (
+        Math.abs(crop.width - native[0] * scale) > 2 * scale + 1 ||
+        Math.abs(crop.height - native[1] * scale) > 2 * scale + 1
+      ) {
         // Scaling the answer back is only honest when the crop covers exactly the window asked for.
         pointer.reason = "the crop did not cover the window it was asked for";
       } else {
@@ -562,6 +572,7 @@ export function buildServer() {
           pointer.refined = true;
           pointer.window = window;
           pointer.crop = crop.path;
+          pointer.scale = scale;
           pointer.inside_crop = fine.box;
           pointer.touching = touchesEdge(fine.box);
         }

@@ -38,6 +38,14 @@
   pixel by pixel, the second look halves the error when it returns an extent and changes nothing when
   it returns a point at the middle of its crop; it never makes the answer worse, and the structured
   reply carries the crop's own box so the difference is visible.
+- Magnified that patch. `/v1/bboxcrop` grew `?scale=` (1-4, a resize in the same helper call that
+  already cut it - no model, no measurement at the endpoint), and the probe now grows its second window
+  to about 1400 px across, so each decimal of the answer is worth that many times fewer pixels of the
+  original. Measured on the same screenshot at ×2 - patches of 1516 to 1764 px cut from windows of 758
+  to 882 px - the answer stayed at the patch's own centre every time, `(968.8, 381.5)`, `(970.0, 382.0)`,
+  `(969.9, 385.5)`, 139 to 143 px from the mark, where the un-magnified crop had left it: more pixels
+  sharpen what the model can see and cannot move what it reads out of the middle, which is what
+  `inside_crop` is there to expose.
 - Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
   picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
   labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is

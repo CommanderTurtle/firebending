@@ -18,7 +18,7 @@ loads a model at daemon startup, on a health check, or while idle.
 | `GET /v1/bboxset` | Optional `?session=name` | Draft, active list, how many entries one picture check covers, turn count; no inference |
 | `POST /v1/bboxask` | One image: bytes, a path, or a data URL | One native request per list entry, the picture with findings drawn on it, optional cut-outs |
 | `GET /v1/bboxask` | Optional `?session=name` | What the next picture would be asked for; no inference |
-| `POST /v1/bboxcrop` | One image plus `?top=&bottom=&left=&right=` or `?boxes=` | Cut-out bytes, or a JSON list of written files; no plan, no model |
+| `POST /v1/bboxcrop` | One image plus `?top=&bottom=&left=&right=` or `?boxes=`, optionally `?pad=`, `?scale=` | Cut-out bytes, or a JSON list of written files; no plan, no model |
 | `GET /v1/bboxcrop` | No body | How to call it; no process started |
 
 ## Setup
@@ -190,7 +190,9 @@ draw or a cut.
 
 `/v1/bboxcrop` needs no plan, no model and no lane: coordinates in, bytes out (or a JSON list of
 written files with `?format=json`, up to 8 at once). It heals the same slips in `?boxes=` and
-otherwise names the field and shows what was found.
+otherwise names the field and shows what was found. `?pad=` widens each side by that fraction of
+itself; `?scale=` magnifies the cut-out (1-4), which is how a coordinate measured over it comes back
+worth that many times fewer pixels of the original - a PIL resize, no model, no measurement.
 
 `optional-mcp/firebending-mcp` exposes these routes as an MCP under plain tool names (`plan`,
 `crop`, `view`, plus sectioned report readers), renders the drawn picture back as an image so the

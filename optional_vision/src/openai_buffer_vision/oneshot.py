@@ -54,6 +54,12 @@ def main() -> int:
     )
     parser.add_argument("--pad", type=float, default=0.0, help="crop: widen each side by this fraction of itself")
     parser.add_argument(
+        "--scale",
+        type=float,
+        default=1.0,
+        help="crop: magnify the cut-out by this much, so a coordinate measured over it is finer than one measured over the whole picture",
+    )
+    parser.add_argument(
         "--out",
         default="",
         help="bbox/crop: write PNG files (one for bbox, <out>-1.png... for crop) instead of base64 on stdout",
@@ -95,7 +101,18 @@ def main() -> int:
                         else:
                             result["image_base64"] = png(canvas)
                     else:
-                        cuts = [crop(image, item["box"], args.pad) for item in objects]
+                        cuts = []
+                        for item in objects:
+                            cut = crop(image, item["box"], args.pad)
+                            if args.scale > 1.0:
+                                # More pixels over the same ground: the answer comes back as a fraction of
+                                # this picture, so every decimal is worth proportionally fewer pixels of the
+                                # original. Nothing is drawn and nothing is inferred here.
+                                cut = cut.resize(
+                                    (max(1, round(cut.width * args.scale)), max(1, round(cut.height * args.scale))),
+                                    Image.LANCZOS,
+                                )
+                            cuts.append(cut)
                         crops = []
                         for index, (item, cut) in enumerate(zip(objects, cuts), start=1):
                             entry = {"name": str(item.get("name") or "?"), "width": cut.width, "height": cut.height}
