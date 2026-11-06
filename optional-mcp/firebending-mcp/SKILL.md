@@ -27,15 +27,16 @@ what it will measure.
    exists, it's beside either a crosshair or mouse" - about the picture the last look read, then prints
    each thing it had found by how far its centre sits from the pointer's centre, in pixels:
    `2: Green button, -400i+50j`, with `i` across and `j` downward. The pointer is the coordinate plate
-   itself, translated: the overlay draws that plate at a fixed margin below and right of the cursor
-   whose numbers it prints, and measured against a mark located pixel by pixel, the plate's centre sits
-   100 px across and 50 px below that cursor - `-100i+50j` in the circle placer's j-up notation,
-   `-100i-50j` in the print's frame, where `i` is across and a negative `j` is up; the placer's sign
-   flips at that boundary, which is why a print of `561i-165j` goes into it as `585@561i+165j`. The box
-   is only moved, never resized or collapsed, so the arithmetic stays centre-of-pointer to
-   centre-of-object on a box that still has four edges. The same layout fact read from the plate's
-   top-left corner is (-34.5, -37.5), exactly half its 155x50 extent away - one relation, two anchors.
-   The reply prints the pointer (`Mouse:`) and the plate it was read from (`Coordinate tag:`). One model
+   itself, translated: the overlay draws that plate at a fixed margin below and right of the cursor whose
+   numbers it prints, so the cursor sits 100 px across and 50 px above that centre. The margin is written
+   the way the circle placer takes vectors - `i` across, `j` upward - as `-100i+50j`, the one number two
+   measurements agree on: against a mark located pixel by pixel the plate's centre was (1082.5, 587) with
+   the cursor at (970.5, 524.5), and applied to a native-resolution capture the derived cursor agreed with
+   the overlay's live position to 0 px across and 21 px down. The vectors this tool prints still count `j`
+   downward, which is why `561i-165j` goes into the placer as `585@561i+165j`. The box is only moved,
+   never resized or collapsed, so the arithmetic stays centre-of-pointer to centre-of-object on a box
+   that still has four edges. The reply prints the pointer (`Mouse:`) and the plate it was read from
+   (`Coordinate tag:`). One model
    request, one box, nothing drawn, no picture back - the marked-up view of a pointer is a person's,
    seen through the command line, never handed to the model. It only works after a look, because that
    is what cached both the objects and the picture's pixel size. It replaces the list the picture

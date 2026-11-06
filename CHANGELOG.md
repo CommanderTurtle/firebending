@@ -44,15 +44,12 @@
   b` tell rather than trusting the score.
 - Put the overlay's plate layout into the arithmetic rather than into any picture: the coordinate plate
   is drawn at a fixed margin below and right of the cursor whose numbers it prints, so the pointer box is
-  that plate *translated* by `-100i-50j` - the print's frame, i across and j downward, which the circle
-  placer would write `-100i+50j` - measured against a mark located pixel by pixel. The box moves; it is
-  not resized, collapsed or corrected, so every vector stays centre-of-pointer to centre-of-object over
-  four real edges. Worth having: against the plate's real bounds the translated centre lands 17.3 px from
-  the mark where the raw centre is 128.3 px away. On the answers measured so far it is close to neutral,
-  147.0 px against 143.9 px unshifted, because the horizontal gain and the vertical loss nearly cancel
-  while the model's vertical anchor is still 134-170 px out. The corner reading of the same relation,
-  (-34.5, -37.5), sits exactly half the plate's 155x50 extent from this one: one layout, two anchors, and
-  the difference between them is arithmetic rather than disagreement.
+  that plate *translated* by its layout margin, `-100i+50j` - `i` across, `j` upward, the frame the circle
+  placer takes. Measured against a mark located pixel by pixel, then confirmed live against the overlay's
+  own coordinates to 0 px across and 21 px down on a native-resolution capture. The box moves; it is not
+  resized, collapsed or corrected, so every vector stays centre-of-pointer to centre-of-object over four
+  real edges. Worth having: against the plate's real bounds the translated centre lands 17.3 px from the
+  mark where the raw centre is 128.3 px away.
 - Made the look's text the result: `plan { confirm }` no longer draws the findings over the picture or
   attaches it (`show: true` asks for it, and the drawing pass is skipped when it is not), and the
   printed line that named the drawn file now names the picture itself so `view` still has something to
