@@ -26,16 +26,16 @@ what it will measure.
 5. `getmouse {}` asks one fixed question, sent unchanged - "Where is the box of coordinates? If it
    exists, it's beside either a crosshair or mouse" - about the picture the last look read, then prints
    each thing it had found by how far its centre sits from the pointer's centre, in pixels:
-   `2: Green button, -400i+50j`, with `i` across and `j` downward. The pointer is read out of the
-   coordinate tag's geometry: the overlay draws that plate at a fixed margin below and right of the
-   cursor whose numbers it prints, so the cursor is the plate's top-left corner shifted up-left by
-   `-28i-31j` - measured two ways on one screenshot, at (-34.5, -37.5) from the corner against a mark
-   located pixel by pixel, and independently as `-100i+50j` from the plate's centre, which is the same
-   point on a 155x50 plate. Both are written here in the print's own frame, i across and j downward, so
-   a negative j means up; the circle placer counts j upward and the sign flips at that boundary, which
-   is why `561i-165j` goes into it as `585@561i+165j`. The corner rather than the centre, because the
-   plate grows with the digits it prints. The reply prints the pointer (`Mouse:`) and the plate it was
-   read from (`Coordinate tag:`). One model
+   `2: Green button, -400i+50j`, with `i` across and `j` downward. The pointer is the coordinate plate
+   itself, translated: the overlay draws that plate at a fixed margin below and right of the cursor
+   whose numbers it prints, and measured against a mark located pixel by pixel, the plate's centre sits
+   100 px across and 50 px below that cursor - `-100i+50j` in the circle placer's j-up notation,
+   `-100i-50j` in the print's frame, where `i` is across and a negative `j` is up; the placer's sign
+   flips at that boundary, which is why a print of `561i-165j` goes into it as `585@561i+165j`. The box
+   is only moved, never resized or collapsed, so the arithmetic stays centre-of-pointer to
+   centre-of-object on a box that still has four edges. The same layout fact read from the plate's
+   top-left corner is (-34.5, -37.5), exactly half its 155x50 extent away - one relation, two anchors.
+   The reply prints the pointer (`Mouse:`) and the plate it was read from (`Coordinate tag:`). One model
    request, one box, nothing drawn, no picture back - the marked-up view of a pointer is a person's,
    seen through the command line, never handed to the model. It only works after a look, because that
    is what cached both the objects and the picture's pixel size. It replaces the list the picture
@@ -44,11 +44,12 @@ what it will measure.
    136-143 px off over six runs, always on the same wrong cluster - the "Was this helpful?" row and the
    `ESC`/`PrSc` keycaps, about 140 px above the thin grey `+` - while claiming 68-88% confidence, and a
    second look through a crop of that window answered the middle of the crop every single time. Asking
-   for the tag puts its left and right edges within 3-8 px of the real plate, twice running, at 28-37%
-   confidence. Its vertical edge is the unresolved half: the box arrives 135-170 px too high, so the
-   up-left inset, worth about 10-17 px against a correct box, reads worse today (163 px, against 134 px
-   unshifted) while the horizontal error stays under 10 px. Read the confidence and the `t == b` tell;
-   the shift pays the moment the box does.
+   for the tag puts its left and right edges within 3-8 px of the real plate, three runs running, at
+   28-37% confidence; its vertical edge is the unresolved half, arriving 134-170 px too high. The
+   translation is worth having regardless - against the plate's real bounds it lands 17.3 px from the
+   mark where the raw centre is 128.3 px away - and on the answers measured so far it is close to
+   neutral, 147.0 px against 143.9 px unshifted, because shifting left helps and shifting up hurts by
+   nearly the same amount until the vertical anchor improves. Read the confidence and the `t == b` tell.
 6. `move { object: "2" }` and `clickreturn { object: "2" }` carry that printed vector to the Macrohelp
    overlay through the overlay's own MCP: open its circle placer, feed the vector, press one key at
    the end. `move` leaves the pointer standing on the thing; `clickreturn` clicks it and blinks the

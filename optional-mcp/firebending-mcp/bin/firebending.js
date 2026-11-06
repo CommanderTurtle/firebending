@@ -603,7 +603,7 @@ export function buildServer() {
 
   server.registerTool("getmouse", {
     title: "Measure everything from the pointer",
-    description: "Ask the fixed coordinate-tag question - \"Where is the box of coordinates? If it exists, it's beside either a crosshair or mouse\" - about the picture the last look already read, then report each thing found in that picture by how far its centre sits from the pointer's centre, in pixels: `2: Green button, -400i+50j`, with i across and j downward. One model request, no cropping and no second look: the tag is boxed digits, which is what a vision model can localize, while a thin grey crosshair on a dark screen is what it invents instead. The overlay draws that tag below and to the right of the cursor whose numbers it prints, so the pointer is the tag's top-left corner shifted up-left by its fixed layout margin (-28i-31j) and the offsets stay centre-to-centre arithmetic. The answer is that printed list, the pointer point and the tag it was read from - no picture, no prose. It only works after a look, because that is what cached both the found objects and the picture's pixel size, and the question is always sent unchanged. Asking replaces what the picture pipeline is looking for, so re-confirm your own list afterwards.",
+    description: "Ask the fixed coordinate-tag question - \"Where is the box of coordinates? If it exists, it's beside either a crosshair or mouse\" - about the picture the last look already read, then report each thing found in that picture by how far its centre sits from the pointer's centre, in pixels: `2: Green button, -400i+50j`, with i across and j downward. One model request, no cropping and no second look: the tag is boxed digits, which is what a vision model can localize, while a thin grey crosshair on a dark screen is what it invents instead. The overlay draws that tag below and to the right of the cursor whose numbers it prints, so the pointer box is that plate translated up-left by its fixed layout margin (-100i-50j, the print's frame; -100i+50j in the circle placer's) and the offsets stay centre-to-centre arithmetic on a box that keeps its four edges. The answer is that printed list, the pointer point and the tag it was read from - no picture, no prose. It only works after a look, because that is what cached both the found objects and the picture's pixel size, and the question is always sent unchanged. Asking replaces what the picture pipeline is looking for, so re-confirm your own list afterwards.",
     inputSchema: z.object({
       image: z.string().min(1).optional().describe("Picture file, absolute path. Defaults to the picture the last look read."),
     }),
@@ -626,22 +626,25 @@ export function buildServer() {
       const reason = first.objects?.[0]?.error || "the model gave no box for the pointer";
       return proseResult(`Mouse: not located - ${reason}`, { ok: false, image, error: reason });
     }
-    // One ask, one box: the tag of coordinates. The overlay draws that plate at a fixed margin below
-    // and right of the cursor whose numbers it prints, so the cursor is a point up-left of the plate's
-    // top-left corner - measured two ways on one screenshot, at (-34.5, -37.5) from the corner against
-    // a mark located pixel by pixel, and independently as "-100i+50j" from the plate's centre in the
-    // circle placer's j-up notation, which is (-100, -50) here and the same point on a 155x50 plate.
-    // The inset below is the mean of the two, and it is taken from the corner rather than the centre
-    // because the plate's width grows with the number of digits it prints. Only the position moves,
-    // never the size: every offset below stays the same centre-to-centre arithmetic, with the cursor
-    // kept as a degenerate box. Signs are the print's own frame - i across, j downward, so a negative j
-    // is up; the circle placer takes j upward and flips it at the boundary.
-    const inset = { i: -28, j: -31 };
-    const cursorX = coarse.box.left + (Number.isFinite(width) ? inset.i / width : 0);
-    const cursorY = coarse.box.top + (Number.isFinite(height) ? inset.j / height : 0);
+    // One ask, one box: the tag of coordinates. The cursor is the box's own centre, translated: the
+    // overlay draws that plate at a fixed margin below and right of the cursor whose numbers it prints,
+    // and measured against a mark located pixel by pixel, the plate's centre sits 100 px across and 50
+    // px below it - "-100i+50j" in the circle placer's j-up notation, (-100, -50) in the print's frame,
+    // where i is across and a negative j is up. From the plate's top-left corner the same fact reads
+    // (-34.5, -37.5), the difference being exactly half the plate's 155x50 extent - one layout, two
+    // anchors. The box is only moved, never resized or collapsed, so the offsets below stay the same
+    // centre-to-centre arithmetic on a box that still has four edges.
+    const shift = { i: -100, j: -50 };
+    const dx = Number.isFinite(width) ? shift.i / width : 0;
+    const dy = Number.isFinite(height) ? shift.j / height : 0;
     const pointer = {
-      box: { top: cursorY, bottom: cursorY, left: cursorX, right: cursorX },
-      inset,
+      box: {
+        top: coarse.box.top + dy,
+        bottom: coarse.box.bottom + dy,
+        left: coarse.box.left + dx,
+        right: coarse.box.right + dx,
+      },
+      shift,
       tag: coarse.box,
       confidence: coarse.confidence ?? coarse.weakest_edge ?? 0,
       weakest_edge: coarse.weakest_edge ?? null,
@@ -659,7 +662,7 @@ export function buildServer() {
     lines.push(
       "",
       `Mouse: t ${at(pointer.box.top)}, b ${at(pointer.box.bottom)}, l ${at(pointer.box.left)}, r ${at(pointer.box.right)} - Confidence ${Math.round(pointer.confidence * 100)}%`,
-      `Coordinate tag: t ${at(coarse.box.top)}, b ${at(coarse.box.bottom)}, l ${at(coarse.box.left)}, r ${at(coarse.box.right)} - the plate is drawn below and right of the cursor, so the pointer is its top-left corner shifted up-left by ${inset.i}i${inset.j >= 0 ? "+" : ""}${inset.j}j.`,
+      `Coordinate tag: t ${at(coarse.box.top)}, b ${at(coarse.box.bottom)}, l ${at(coarse.box.left)}, r ${at(coarse.box.right)} - the plate is drawn below and right of the cursor, so the pointer box is that plate translated up-left by ${shift.i}i${shift.j >= 0 ? "+" : ""}${shift.j}j.`,
     );
     last.mouse = { ...pointer, at: image };
     return proseResult(lines.join("\n"), {

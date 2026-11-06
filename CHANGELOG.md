@@ -42,15 +42,17 @@
   confidence, its left and right edges within 8 px of the real tag - a box of text in the right column,
   about 135 px too high. Both numbers are in the guide, so a driver reads the confidence and the `t ==
   b` tell rather than trusting the score.
-- Put the overlay's plate layout into the arithmetic rather than into any picture: the coordinate tag is
-  drawn at a fixed margin below and right of the cursor whose numbers it prints, so the cursor is that
-  plate's top-left corner shifted up-left by `-28i-31j` - measured at (-34.5, -37.5) from the corner
-  against a mark located pixel by pixel, and independently at (-100, -50) from the plate's centre, the
-  same point on a 155x50 plate. The corner and not the centre, because the plate widens with the digits
-  it prints; only the position moves, never the size, so the vectors stay centre-to-centre. Worth 10-17
-  px against a correct box; on the answers measured so far the plate's box arrives 135-170 px too high,
-  so the shift reads worse today (163 px against 134 px unshifted) while the horizontal error holds
-  under 10 px. Geometry first, and it pays the moment the vertical does.
+- Put the overlay's plate layout into the arithmetic rather than into any picture: the coordinate plate
+  is drawn at a fixed margin below and right of the cursor whose numbers it prints, so the pointer box is
+  that plate *translated* by `-100i-50j` - the print's frame, i across and j downward, which the circle
+  placer would write `-100i+50j` - measured against a mark located pixel by pixel. The box moves; it is
+  not resized, collapsed or corrected, so every vector stays centre-of-pointer to centre-of-object over
+  four real edges. Worth having: against the plate's real bounds the translated centre lands 17.3 px from
+  the mark where the raw centre is 128.3 px away. On the answers measured so far it is close to neutral,
+  147.0 px against 143.9 px unshifted, because the horizontal gain and the vertical loss nearly cancel
+  while the model's vertical anchor is still 134-170 px out. The corner reading of the same relation,
+  (-34.5, -37.5), sits exactly half the plate's 155x50 extent from this one: one layout, two anchors, and
+  the difference between them is arithmetic rather than disagreement.
 - Made the look's text the result: `plan { confirm }` no longer draws the findings over the picture or
   attaches it (`show: true` asks for it, and the drawing pass is skipped when it is not), and the
   printed line that named the drawn file now names the picture itself so `view` still has something to
