@@ -5,6 +5,7 @@
 // a conversation needs: a remembered last answer so a cut-out can be asked for by title or number,
 // the picture itself rendered back as an image, and lossless sectioned reports for the long answers.
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -194,6 +195,124 @@ function headerSize(path) {
   }
   return null;
 }
+
+/// The Macrohelp overlay speaks MCP like anything else does, so that is how a measured vector gets
+/// moved: this process is a plain client of that MCP. One tool, `control`, takes one shape - open a
+/// menu, then the run id it answers with plus the inputs for that menu - and a move is a menu and two
+/// inputs. Spawned lazily, so a conversation that never touches the pointer never starts it.
+class Overlay {
+  #child = null;
+  #ready = null;
+  #pending = new Map();
+  #buffer = "";
+  #id = 0;
+  #tool = null;
+
+  #send(method, params, reply = true) {
+    return new Promise((resolve, reject) => {
+      const id = ++this.#id;
+      if (reply) this.#pending.set(id, { resolve, reject });
+      const body = reply ? { jsonrpc: "2.0", id, method, params } : { jsonrpc: "2.0", method, params };
+      this.#child.stdin.write(`${JSON.stringify(body)}\n`);
+    });
+  }
+
+  #start() {
+    if (this.#ready) return this.#ready;
+    const command = process.env.MACROHELP_MCP_COMMAND || "macrohelpctl";
+    const args = (process.env.MACROHELP_MCP_ARGS || "mcp").split(" ").filter(Boolean);
+    const child = spawn(command, args, { stdio: ["pipe", "pipe", "inherit"] });
+    this.#child = child;
+    const refuse = (reason) => {
+      this.#child = null;
+      this.#ready = null;
+      this.#tool = null;
+      for (const { reject } of this.#pending.values()) reject(new Error(reason));
+      this.#pending.clear();
+    };
+    child.on("error", (failure) => refuse(
+      failure.code === "ENOENT"
+        ? `no Macrohelp MCP at ${JSON.stringify(command)} - set MACROHELP_MCP_COMMAND and MACROHELP_MCP_ARGS to how this client starts it`
+        : String(failure?.message || failure),
+    ));
+    child.on("close", () => refuse("the Macrohelp MCP closed"));
+    child.stdout.on("data", (chunk) => {
+      this.#buffer += chunk;
+      for (;;) {
+        const at = this.#buffer.indexOf("\n");
+        if (at < 0) break;
+        const line = this.#buffer.slice(0, at).trim();
+        this.#buffer = this.#buffer.slice(at + 1);
+        if (!line) continue;
+        let message = null;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        const waiter = message?.id === undefined ? null : this.#pending.get(message.id);
+        if (!waiter) continue;
+        this.#pending.delete(message.id);
+        if (message.error) waiter.reject(new Error(JSON.stringify(message.error)));
+        else waiter.resolve(message.result);
+      }
+    });
+    this.#ready = (async () => {
+      await this.#send("initialize", {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "firebending", version: VERSION },
+      });
+      this.#send("notifications/initialized", {}, false);
+      // Ask what it actually registers rather than guessing the name: the overlay answers
+      // "Unknown tool" and makes the caller read the list itself.
+      const listed = await this.#send("tools/list", {});
+      const names = (listed?.tools || []).map((tool) => tool.name);
+      this.#tool = names.find((name) => name === "control")
+        || names.find((name) => name.endsWith("_control"))
+        || names.find((name) => (listed.tools.find((tool) => tool.name === name)?.description || "").includes("menu"));
+      if (!this.#tool) {
+        throw new Error(`the Macrohelp MCP offers no control tool - it lists ${names.join(", ") || "nothing"}`);
+      }
+      return this.#send.bind(this);
+    })().catch((failure) => {
+      refuse(String(failure?.message || failure));
+      try {
+        child.kill();
+      } catch {
+        // Already gone.
+      }
+      throw failure;
+    });
+    return this.#ready;
+  }
+
+  /// One call to the overlay's control tool, answered as the JSON the overlay itself writes.
+  async control(request) {
+    const send = await this.#start();
+    const result = await send("tools/call", { name: this.#tool, arguments: request });
+    const text = (result?.content || []).map((part) => part.text || "").join("");
+    if (result?.isError) throw new Error(text || "the overlay refused the request");
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { raw: text };
+    }
+  }
+
+  stop() {
+    try {
+      this.#child?.kill();
+    } catch {
+      // Already gone.
+    }
+    this.#child = null;
+    this.#ready = null;
+  }
+}
+
+const overlay = new Overlay();
+process.on("exit", () => overlay.stop());
 
 function reportText(answer) {
   const lines = [`## What was found in the picture: ${answer.answered} of ${answer.asked}`, ""];
@@ -629,6 +748,119 @@ export function buildServer() {
       offsets,
     });
   }));
+
+  /// The circle placer's own notation: radius first, then i to the right and j upward. The print
+  /// measures j downward, so the sign turns over on the way out - arithmetic, not another look.
+  function circleInput(across, down) {
+    return `${Math.round(Math.hypot(across, down))}@${across}i${down <= 0 ? "+" : "-"}${Math.abs(down)}j`;
+  }
+
+  function titles() {
+    return (last?.objects || []).filter((object) => !object.error).map((object) => `${object.index}: ${object.name}`);
+  }
+
+  /// The overlay answers refusals as JSON, sometimes with the complaint in a string and sometimes in
+  /// an object, so read it from whichever shape it used.
+  function complaintOf(answer) {
+    return (typeof answer?.error === "string" ? answer.error : answer?.error?.message) || "";
+  }
+
+  /// The overlay keeps a control run active until its scheduled stroke has landed, so a walk called
+  /// straight after another meets "Control run ... is active". Wait briefly for it to drain rather
+  /// than stopping whatever else the keyboard was doing, then say so plainly if it will not.
+  async function openPlacer(request) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const opened = await overlay.control(request);
+      if (opened?.run) return opened;
+      const complaint = complaintOf(opened);
+      if (!complaint.includes("is active")) {
+        throw new Error(`the overlay did not open the circle placer: ${complaint || opened?.raw || "no run id came back"}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    throw new Error("the overlay is still busy with another control run; try the move again in a moment.");
+  }
+
+  /// Walk the overlay's circle placer with a measured vector and press one key at the Confirm stage:
+  /// Z leaves the pointer standing on the target, B clicks the target and blinks the pointer back.
+  /// The vector comes from the last getmouse, so the pointer's position is never re-guessed here.
+  async function walkCircle(kind, args) {
+    if (!last?.mouse) throw new Error("There is no pointer to measure from: run getmouse first.");
+    const key = kind === "move" ? "Z" : "B";
+    let across;
+    let down;
+    let what;
+    if (args.offset) {
+      const matched = /^(-?\d+)i([+-]\d+)j$/.exec(args.offset.trim());
+      if (!matched) throw new Error(`offset must read like the print, for example "570i-165j" - got ${JSON.stringify(args.offset)}.`);
+      across = Number(matched[1]);
+      down = Number(matched[2]);
+      what = `the offset ${args.offset.trim()}`;
+    } else {
+      const choices = titles();
+      const named = args.object === undefined
+        ? (choices.length === 1 ? last.objects.find((object) => !object.error) : null)
+        : resolveObject(args.object);
+      if (!named) {
+        throw new Error(choices.length
+          ? `Say which one: ${choices.join(", ")}.`
+          : "Nothing was located, so there is nothing to move to.");
+      }
+      const pointer = last.mouse.box;
+      const width = Number(last.dims?.width);
+      const height = Number(last.dims?.height);
+      across = Math.round(((named.box.left + named.box.right) / 2 - (pointer.left + pointer.right) / 2) * width);
+      down = Math.round(((named.box.top + named.box.bottom) / 2 - (pointer.top + pointer.bottom) / 2) * height);
+      what = `${named.index}: ${named.name}`;
+    }
+    const input = circleInput(across, down);
+    const opened = await openPlacer(args.origin ? { menu: "circle_placer", origin: args.origin } : { menu: "circle_placer" });
+    const run = opened.run;
+    const placed = await overlay.control({ run, inputs: [input] });
+    const origin = placed?.dialog?.state?.origin || opened?.dialog?.state?.origin || null;
+    const target = placed?.dialog?.state?.target || null;
+    if (!target) {
+      throw new Error(`the overlay placed nothing for ${input}: ${complaintOf(placed) || placed?.dialog?.state?.error || "it answered without a target"}`);
+    }
+    const done = await overlay.control({ run, inputs: [key] });
+    const refused = complaintOf(done) || null;
+    last.action = { kind, vector: input, origin, target, error: refused };
+    const line = kind === "move"
+      ? `Moved ${what} - ${input} from [${origin}] to [${target}]; the pointer stands on it.`
+      : `Clicked ${what} and blinked back - ${input} from [${origin}] to [${target}]; the click landed there and the pointer is back where it started.`;
+    return proseResult(refused ? `${line}\nThe overlay reported: ${refused}` : line, {
+      ok: !refused,
+      action: kind,
+      vector: input,
+      i: across,
+      j: down,
+      radius: Math.round(Math.hypot(across, down)),
+      origin,
+      target,
+      key,
+      error: refused,
+    });
+  }
+
+  const walkSchema = z.object({
+    object: z.string().min(1).optional().describe("Which thing to aim at, by the exact title or number the last look printed, for example \"Qween\" or \"2\". One of them is required whenever more than one thing was found."),
+    offset: z.string().min(1).optional().describe("Aim by this vector instead of an object's, shaped like the print: \"570i-165j\", i right and j down."),
+    origin: z.array(z.number().int()).length(2).optional().describe("Start the vector at these screen coordinates instead of the live cursor."),
+  });
+
+  server.registerTool("move", {
+    title: "Move the pointer along the measured vector",
+    description: "Needs getmouse first. Take the vector from the pointer to one of the things the last look printed and walk the Macrohelp overlay's circle placer to it - open the menu, feed the vector, press the key that moves - so the pointer ends standing on the thing and nothing is clicked. The vector is arithmetic from the two boxes, never a second look.",
+    inputSchema: walkSchema,
+    annotations: { openWorldHint: true },
+  }, guarded(async (args) => walkCircle("move", args)));
+
+  server.registerTool("clickreturn", {
+    title: "Click along the measured vector and bring the pointer back",
+    description: "The same walk as move, ending on the key that clicks the target and blinks the pointer back to where it started: the click happens where the vector pointed, and the pointer leaves no trace of the trip.",
+    inputSchema: walkSchema,
+    annotations: { openWorldHint: true },
+  }, guarded(async (args) => walkCircle("clickreturn", args)));
 
   /// Ask the agreed framework about 1-N states, chunked under the daemon's 32-state / 256-decision
   /// ceiling. A state that cannot be decided is a row of its own; it never loses the states that

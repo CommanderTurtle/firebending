@@ -199,7 +199,8 @@ seeing, not arithmetic - a PIL resize, no model, no measurement.
 `crop`, `view`, plus sectioned report readers), prints what was found as text - that list is the
 result - and only draws the findings over the picture for the client when `show` is passed or `view`
 is called. It remembers the last answer so the next sentence can be "crop the llama logo" or
-"crop 2".
+"crop 2". It is also an MCP *client*: `move` and `clickreturn` hand the pointer vector `getmouse`
+measured to the Macrohelp overlay's own MCP, whose circle placer turns it into a cursor move.
 
 ## Cereal: image → ASCII → Jev
 

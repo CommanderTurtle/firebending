@@ -26,6 +26,9 @@ user   "go"
 agent  plan { confirm: true, image: "/p/x.png" }
        -> one line per object with its coordinates; the drawn picture only with show: true
 agent  crop { object: "logo" }                 -> that thing alone, shown
+agent  getmouse {}                             -> pointer to each thing in pixels: 2: logo, -400i+50j
+agent  move { object: "logo" }                 -> pointer stands there, via the overlay's own MCP
+agent  clickreturn { object: "logo" }          -> same walk, the other key: clicks, blinks back
 ```
 
 ```

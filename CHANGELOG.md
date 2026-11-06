@@ -53,6 +53,22 @@
   printed line that named the drawn file now names the picture itself so `view` still has something to
   open. A look that only wants coordinates no longer pays for a picture nobody asked to see, and a
   driver is not steered into a second look at an image it never requested.
+- Taught that MCP to speak MCP itself: `move` and `clickreturn` take the vector `getmouse` printed and
+  walk the Macrohelp overlay's circle placer through the overlay's own MCP - open the menu, feed the
+  vector, press one key - which makes the two tools the same walk ending on a different key, `Z`
+  leaving the pointer on the thing and `B` clicking it and blinking the pointer back. The target is
+  chosen from the titles the last look printed, so with more than one thing found a title is required
+  rather than guessed; `offset` and `origin` cover a vector or a starting point the driver supplies.
+  Nothing is measured again: no picture, no pixel search, no ask. The overlay keeps one control run
+  active at a time, so the walk waits briefly for the previous stroke to land instead of stopping
+  whatever else the keyboard was doing. Verified live over stdio: `1: Queen of England, 570i-161j`
+  walked to `[3542, 921]` from `[2972, 1082]`, and a title that was not found came back naming the
+  titles that were.
+- Stopped a picture from being thrown away while it is still in use: the data directory holds two
+  kinds of print, the copy of a posted picture and the box drawings and cut-outs made from it, and one
+  shared cap of 32 let a dozen cut-outs evict the picture that `getmouse`, `crop` and `view` still read
+  back by path, which answered `404` for the rest of the session. The two kinds are capped separately
+  now - 64 derived prints, 16 pictures - because the derived ones can always be cut again.
 - Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
   picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
   labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is

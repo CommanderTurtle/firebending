@@ -101,13 +101,21 @@ const TARGETS = {
   },
 };
 
-function serverDefinition() {
+function serverDefinition(document = {}) {
+  // The pointer moves go through the Macrohelp overlay's own MCP, so this server needs to know how
+  // this client starts it. Copy that entry rather than guessing a path: the two can never disagree.
+  const overlay = document.mcpServers?.macrohelp;
+  const env = { FIREBENDING_DAEMON_URL: daemonUrl };
+  if (overlay?.command) {
+    env.MACROHELP_MCP_COMMAND = overlay.command;
+    if (Array.isArray(overlay.args) && overlay.args.length) env.MACROHELP_MCP_ARGS = overlay.args.join(" ");
+  }
   return {
     type: "stdio",
     command,
     args: [serverEntry],
     cwd: REPO_ROOT,
-    env: { FIREBENDING_DAEMON_URL: daemonUrl },
+    env,
     enabled: true,
     // A look is one vision-model request per object; no client-side clock should cut it off.
     timeout: 0,
@@ -148,7 +156,7 @@ function apply(target) {
     return;
   }
   if (!existsSync(serverEntry)) throw new Error(`The server entry is missing: ${serverEntry}`);
-  document.mcpServers[SERVER_NAME] = serverDefinition();
+  document.mcpServers[SERVER_NAME] = serverDefinition(document);
   atomicWrite(file, JSON.stringify(document, null, 2));
   if (profile.skill && existsSync(profile.skill.source)) {
     atomicWrite(profile.skill.file, readFileSync(profile.skill.source, "utf8"), 0o644);

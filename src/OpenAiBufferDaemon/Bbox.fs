@@ -296,11 +296,25 @@ module Bbox =
             with :? IOException -> ()
         path
 
-    let private prune keep =
+    /// Two kinds of print live here: the copy of a posted picture, which a later look, cut-out or
+    /// pointer measurement reads back by path, and the derived prints - the box drawing and the
+    /// cut-outs - which can always be cut again from that copy. So the two are capped separately, and
+    /// a picture cannot be evicted because someone made a dozen cut-outs out of it.
+    let private prune keepSources keepDerived =
         try
-            let prints = Directory.GetFiles(Files.dataDirectory, "bbox-*") |> Array.sortBy File.GetLastWriteTimeUtc |> Array.rev
-            if prints.Length > keep then
-                prints[keep..] |> Array.iter (fun path -> try File.Delete path with :? IOException -> ())
+            let prints =
+                Directory.GetFiles(Files.dataDirectory, "bbox-*")
+                |> Array.sortBy File.GetLastWriteTimeUtc
+                |> Array.rev
+            let derivedOf (path: string) =
+                let name = Path.GetFileName path
+                name.Contains "-crop-" || name.EndsWith "-boxes.png"
+            let derived, sources = prints |> Array.partition derivedOf
+            let evict (keep: int) (items: string[]) : unit =
+                if items.Length > keep then
+                    items[keep..] |> Array.iter (fun (path: string) -> try File.Delete path with :? IOException -> ())
+            evict keepDerived derived
+            evict keepSources sources
         with :? IOException -> ()
 
     /// One crop run: the helper writes the files and reports them, so no megabyte rides the pipe.
@@ -311,7 +325,7 @@ module Bbox =
             Perception.runImageHelper options
                 [ "--operation"; "crop"; "--boxes"; boxes; "--pad"; sprintf "%g" pad; "--scale"; sprintf "%g" scale
                   "--out"; Path.Combine(Files.dataDirectory, $"bbox-{key}-crop") ] bytes ct
-        prune 32
+        prune 16 64
         return
             [ for entry in result.GetProperty("crops").EnumerateArray() ->
                 let path = Inference.stringValue (entry.GetProperty "path")
@@ -326,7 +340,7 @@ module Bbox =
         let key = (digest (Encoding.UTF8.GetBytes boxes)).[0..15]
         let path = Path.Combine(Files.dataDirectory, $"bbox-{key}-boxes.png")
         let! result = Perception.runImageHelper options [ "--operation"; "bbox"; "--boxes"; boxes; "--out"; path ] bytes ct
-        prune 32
+        prune 16 64
         return {| path = path
                   width = integer (result.GetProperty "width")
                   height = integer (result.GetProperty "height")

@@ -56,6 +56,14 @@ what it will measure.
    `0.51` in the middle every time, `(968.8, 381.5)`, `(970.0, 382.0)`, `(969.9, 385.5)`, still 139 to
    143 px from the mark, the same place the un-magnified crop gave. More pixels sharpen an answer the
    model can see; they cannot move one it is reading out of the patch's own centre.
+6. `move { object: "2" }` and `clickreturn { object: "2" }` carry that printed vector to the Macrohelp
+   overlay through the overlay's own MCP: open its circle placer, feed the vector, press one key at
+   the end. `move` leaves the pointer standing on the thing; `clickreturn` clicks it and blinks the
+   pointer back to where it started. Both choose from the titles the last look printed, so with more
+   than one thing found a title is required, never guessed. `offset: "570i-165j"` aims by a vector you
+   give instead; `origin: [x,y]` starts from a screen point other than the live cursor. The ask count
+   never moves: a look is one request per listed thing, `getmouse` is two, and a walk is none, because
+   the walk is arithmetic on the boxes both answers already hold.
 
 One list entry is one request to the model, taken one at a time. A thing the model refuses to locate
 gets its own "not found" line and no coordinates at all, while the others still answer. Coordinates
