@@ -29,7 +29,8 @@ agent  rerun {}                                 -> same questions again, fresh b
 agent  view {}                                  -> the picture with everything boxed (draws it if need be)
 agent  crop { object: "logo" }                 -> that thing alone, shown
 agent  getmouse {}                             -> pointer to each thing in pixels: 2: logo, -400i+50j
-agent  move { object: "logo" }                 -> pointer stands there, via the overlay's own MCP
+agent  move { object: "logo" }                 -> the vector printed, nothing moved yet
+agent  move { object: "logo", confirm: true }  -> the overlay walks it; the pointer stands there
 agent  clickreturn { object: "logo" }          -> same walk, the other key: clicks, blinks back
 ```
 
@@ -52,6 +53,8 @@ agent  decide { confirm: true, states: [...] }          -> an expected level per
 | `crop`            | Cut a region out. After a look, name the object by title or number; or pass `region` / up to eight `regions` and a fresh `image`. A cut-out the look already wrote is reused instead of redrawn. |
 | `view`            | The preview after a look: the picture with every found thing boxed, the same file `show: true` returns. No arguments previews the last look - drawing it if that pass didn't, and saying so; `path` shows another file, `path` with `object` or `region` cuts that part out and measures nothing. |
 | `getmouse`        | One fixed question, sent unchanged - where the box of coordinates is - about the picture the last look read. The pointer box is that plate translated by its layout margin (`-100i+50j`, `i` across and `j` upward, the frame the circle placer takes), the box keeping its four edges so the vectors stay centre-to-centre. Prints the vectors, the pointer and the tag it came from, nothing drawn: `1: Object, 30i+60j` (i across, j down). |
+| `move`            | The gated walk to a thing: the first call prints the vector `getmouse` measured and what it would do, touching nothing; `confirm: true` drives the overlay's circle placer in that order and leaves the pointer standing on the thing. The key goes in only once the placer answers with stage Confirm - pressed while it is still at Distance it lands in the distance field as text, which is what left a walk 40-56 px of a 400-563 px vector, against 1.4 px read first. `offset` aims by a vector you give, `origin` starts somewhere other than the live cursor. |
+| `clickreturn`     | The same gated walk ending on the click key: the click lands where the vector pointed and the pointer blinks back to where it started, so the trip leaves no trace. |
 | `decide`          | One control point for judging things by text: `request` drafts or refines the questions, `confirm` + `state` / `states` (up to 32) judges them, `clear` starts over, nothing at all reports the current questions. |
 | `categorize`      | The short route for labelling a list: `items` + `labels` drafts one labelling question, `confirm` labels every item (up to 512 per call, batched automatically) and returns a tally. |
 | `report_read`     | Open sections of a stored report by number.                                           |
@@ -98,6 +101,8 @@ available without opening this README, and `uninstall` takes it back. A client r
 | `FIREBENDING_TIMEOUT_MS`  | `300000`                | How long one look may take.                          |
 | `FIREBENDING_MAX_IMAGES`  | `2`                     | Pictures attached to a reply; the rest stay on disk. |
 | `FIREBENDING_SESSION`     | a random id             | Fix the daemon session across restarts of this MCP.  |
+| `MACROHELP_MCP_COMMAND`   | `macrohelpctl`          | How to start the overlay's own MCP, which the two walk tools drive. `install` copies it from the client's `macrohelp` entry so the two can never disagree. |
+| `MACROHELP_MCP_ARGS`      | `mcp`                   | Arguments for that command, space-separated.         |
 
 ## Shape
 

@@ -69,11 +69,15 @@ others still answer.
   the real one, while the vertical edge can arrive 130-170 px out. `t == b` means it answered a line
   of text rather than the box, and a low confidence is the same warning.
 - `getmouse` replaces the list the picture pipeline was looking for, so re-confirm your own afterwards.
-- `move { object: "2" }` and `clickreturn { object: "2" }` hand that vector to the overlay's circle
-  placer: `move` leaves the pointer standing on the thing, `clickreturn` clicks it and blinks the
-  pointer back to where it started. With more than one thing found, name a title, never guess.
-  `offset: "570i-165j"` walks a vector you give; `origin: [x,y]` starts somewhere other than the live
-  cursor. A walk costs no model call - it is arithmetic on boxes both answers already hold.
+- `move { object: "2" }` and `clickreturn { object: "2" }` are gated like the rest: the first call
+  prints the vector `getmouse` measured and moves nothing, `confirm: true` walks it. The walk drives the
+  overlay's own circle placer - open, feed the vector, then press the key only once the placer answers
+  with stage Confirm, because a key pressed while it is still at Distance goes into the distance field
+  as text: measured at 40-56 px of a 400-563 px vector when pressed blind, 1.4 px when the stage was
+  read first. `move` ends on Z and leaves the pointer standing on the thing; `clickreturn` ends on B,
+  which clicks it and blinks the pointer back. With more than one thing found, name a title, never
+  guess. `offset: "570i-165j"` walks a vector you give; `origin: [x,y]` starts somewhere other than the
+  live cursor. A walk costs no model call - it is arithmetic on boxes both answers already hold.
 
 ## Text
 

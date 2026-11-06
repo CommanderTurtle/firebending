@@ -813,9 +813,34 @@ export function buildServer() {
       what = `${named.index}: ${named.name}`;
     }
     const input = circleInput(across, down);
+    if (!args.confirm) {
+      return proseResult(
+        `${what} - ${input} from the live cursor: ${across} across, ${Math.abs(down)} ${down <= 0 ? "up" : "down"}. Nothing has moved: this is the draft. Call again with confirm: true and the overlay's circle placer is walked - open it, feed this vector, then press ${key} once it answers with stage Confirm, which ${kind === "move" ? "leaves the pointer standing on the thing" : "clicks the target and blinks the pointer back to where it started"}.`,
+        {
+          ok: true,
+          action: kind,
+          confirmed: false,
+          vector: input,
+          i: across,
+          j: down,
+          radius: Math.round(Math.hypot(across, down)),
+          key,
+          start: args.origin || "live cursor",
+        },
+      );
+    }
     const opened = await openPlacer(args.origin ? { menu: "circle_placer", origin: args.origin } : { menu: "circle_placer" });
     const run = opened.run;
-    const placed = await overlay.control({ run, inputs: [input] });
+    let placed = await overlay.control({ run, inputs: [input] });
+    // The placer takes its action keys at the Confirm stage and nowhere else: pressed while it is still
+    // at Distance the key goes into the distance field as text, which is what left a walk 40-56 px into
+    // a 400-563 px vector. The reply that accepts the vector names the stage, so feed and check until it
+    // says Confirm rather than pressing blind.
+    for (let attempt = 0; placed?.dialog?.state?.stage !== "Confirm" && attempt < 4; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      placed = await overlay.control({ run, inputs: [input] });
+    }
+    const stage = placed?.dialog?.state?.stage || "";
     const origin = placed?.dialog?.state?.origin || opened?.dialog?.state?.origin || null;
     const target = placed?.dialog?.state?.target || null;
     if (!target) {
@@ -823,13 +848,18 @@ export function buildServer() {
     }
     const done = await overlay.control({ run, inputs: [key] });
     const refused = complaintOf(done) || null;
-    last.action = { kind, vector: input, origin, target, error: refused };
+    const stageNote = stage === "Confirm"
+      ? ""
+      : ` The placer never answered with stage Confirm, so ${key} may have gone in as distance text: aim by hand from the printed vector if the pointer is not where this says.`;
+    last.action = { kind, vector: input, origin, target, stage, error: refused };
     const line = kind === "move"
       ? `Moved ${what} - ${input} from [${origin}] to [${target}]; the pointer stands on it.`
       : `Clicked ${what} and blinked back - ${input} from [${origin}] to [${target}]; the click landed there and the pointer is back where it started.`;
-    return proseResult(refused ? `${line}\nThe overlay reported: ${refused}` : line, {
+    return proseResult([line, stageNote, refused && `The overlay reported: ${refused}`].filter(Boolean).join("\n"), {
       ok: !refused,
       action: kind,
+      confirmed: true,
+      stage,
       vector: input,
       i: across,
       j: down,
@@ -845,18 +875,19 @@ export function buildServer() {
     object: z.string().min(1).optional().describe("Which thing to aim at, by the exact title or number the last look printed, for example \"Qween\" or \"2\". One of them is required whenever more than one thing was found."),
     offset: z.string().min(1).optional().describe("Aim by this vector instead of an object's, shaped like the print: \"570i-165j\", i right and j down."),
     origin: z.array(z.number().int()).length(2).optional().describe("Start the vector at these screen coordinates instead of the live cursor."),
+    confirm: z.boolean().default(false).describe("False prints the vector and what the walk would do without touching the overlay; true means the user agreed and the walk is taken."),
   });
 
   server.registerTool("move", {
     title: "Move the pointer along the measured vector",
-    description: "Needs getmouse first. Take the vector from the pointer to one of the things the last look printed and walk the Macrohelp overlay's circle placer to it - open the menu, feed the vector, press the key that moves - so the pointer ends standing on the thing and nothing is clicked. The vector is arithmetic from the two boxes, never a second look.",
+    description: "Needs getmouse first. Take the vector from the pointer to one of the things the last look printed and walk the Macrohelp overlay's circle placer to it - open the menu, feed the vector, press the key that moves - so the pointer ends standing on the thing and nothing is clicked. The vector is arithmetic from the two boxes, never a second look. Gated like the plan and decide tools: without confirm it prints the vector and the walk it would take, touching nothing; with confirm: true it drives the overlay's MCP in that order and sends the key only once the placer answers with stage Confirm, because pressed earlier the key lands in the distance field as text and the pointer barely moves.",
     inputSchema: walkSchema,
     annotations: { openWorldHint: true },
   }, guarded(async (args) => walkCircle("move", args)));
 
   server.registerTool("clickreturn", {
     title: "Click along the measured vector and bring the pointer back",
-    description: "The same walk as move, ending on the key that clicks the target and blinks the pointer back to where it started: the click happens where the vector pointed, and the pointer leaves no trace of the trip.",
+    description: "The same gated walk as move, ending on the key that clicks the target and blinks the pointer back to where it started: the click happens where the vector pointed, and the pointer leaves no trace of the trip. The draft call prints the vector and the two keys; confirm: true takes the walk.",
     inputSchema: walkSchema,
     annotations: { openWorldHint: true },
   }, guarded(async (args) => walkCircle("clickreturn", args)));

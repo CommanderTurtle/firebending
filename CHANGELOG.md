@@ -86,6 +86,14 @@
   whatever else the keyboard was doing. Verified live over stdio: `1: Queen of England, 570i-161j`
   walked to `[3542, 921]` from `[2972, 1082]`, and a title that was not found came back naming the
   titles that were.
+- Gated those two walks like every other decision in that MCP: the first call prints the vector
+  `getmouse` measured and the walk it would take, touching no overlay at all, and `confirm: true` takes
+  it. Fixed why a walk fell short of its vector: the placer only acts on `Z` and `B` at its Confirm
+  stage, and pressed while it is still at Distance the key went into the distance field as text, which
+  moved the pointer 40-56 px of a 400-563 px vector. The walk now feeds and re-reads the reply until the
+  stage says Confirm before pressing; the same three calls driven one at a time by hand, with the stage
+  read the same way, landed 1.4 px from the target. A walk whose stage never reached Confirm says so
+  instead of reporting a move that did not happen.
 - Stopped a picture from being thrown away while it is still in use: the data directory holds two
   kinds of print, the copy of a posted picture and the box drawings and cut-outs made from it, and one
   shared cap of 32 let a dozen cut-outs evict the picture that `getmouse`, `crop` and `view` still read
