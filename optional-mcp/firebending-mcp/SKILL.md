@@ -23,38 +23,24 @@ what it will measure.
    passed; `view` is the optional look afterwards, by path or object.
 4. Afterwards `crop { object: "llama logo" }` or `crop { object: "2" }` cuts one thing out again with
    no second model call, and `view { path: "..." }` shows any file, or one region of it.
-5. `getmouse {}` asks one fixed question - "Where is the mouse or crosshair in this image? This would
-   be a perfect center on on the mouse/crosshair itself" - about the picture the last look read, then
-   prints each thing it had found by how far its centre sits from the pointer's centre, in pixels:
-   `2: Green button, -400i+50j`, with `i` across and `j` downward, and the pointer's own box and
-   confidence underneath. Nothing is drawn and no picture comes back - the marked-up view of the
-   pointer is a person's, seen through the command line, never handed to the model. It only works
-   after a look, because that is what cached both the objects and the picture's pixel size, and the
-   question is always sent unchanged. It replaces the list the picture pipeline is looking for, so
-   re-confirm your own list afterwards.
-   Backing that reply are two inferences, and the driver sees neither of them separately. The first
-   answer sizes a window out of its own weakest edge - the less sure it is, the wider the patch - crops
-   that patch out of the picture at its native size, and asks the second question, "Where is center of
-   the crosshair, or tip of the mouse, in this image?", about the crop alone. Measuring over that patch
-   is the finer measurement, because the answer is a fraction of the picture it was measured over: a
-   hundredth of a 865-pixel patch is 8.65 pixels of the original, where a hundredth of a 1780-pixel
-   screen is 17.8. Nothing is resampled on the way - every pixel of the window is already there, and
-   blowing it up would only blur it. The answer is scaled and shifted back into the picture and that box
-   becomes the pointer. The crop is temporary. The structured answer keeps both passes: `passes`,
-   `refined`, the window, the crop file, the box as the crop reported it, and which edge of the crop it
-   pressed against.
-   What that is worth was measured, over four probes of a screenshot whose crosshair was then found
-   pixel by pixel: when the second look returns an extent (`t 0.51, b 0.91` - it saw a tall mark), the
-   pointer lands about half as far off; when it returns a point in the dead middle of the crop
-   (`0.5, 0.5, 0.5, 0.5`), it has seen nothing and the position does not move at all. It never makes
-   the answer worse, and a point in the middle of the crop with `weakest_edge` near zero is the tell
-   that the pointer is only as good as the first guess. Across that same image the sideways answer
-   tightened from 954 px to 970 px against a measured 970.5 px, because the first pass had quantized
-   that axis to two decimals and the crop let it be measured again. Magnifying that patch beyond its
-   native size was tried and measured too - three passes at ×2, patches of 1516 to 1764 px cut from the
-   same windows: `0.51` in the middle every time, `(968.8, 381.5)`, `(970.0, 382.0)`, `(969.9, 385.5)`,
-   139 to 143 px out, exactly where the native crop left it. The answer is a fraction of the picture it
-   was shown, so resampling cannot add information; the patch goes over as cut.
+5. `getmouse {}` asks one fixed question, sent unchanged - "Where is the box of coordinates? If it
+   exists, it's beside either a crosshair or mouse" - about the picture the last look read, then prints
+   each thing it had found by how far its centre sits from the pointer's centre, in pixels:
+   `2: Green button, -400i+50j`, with `i` across and `j` downward. The pointer is the coordinate tag's
+   top-left corner, because the overlay draws that tag below and to the right of the cursor whose
+   numbers it prints, so the reply prints the corner (`Mouse:`) and the tag it was read from
+   (`Coordinate tag:`). One model request, one box, nothing drawn, no picture back - the marked-up view
+   of a pointer is a person's, seen through the command line, never handed to the model. It only works
+   after a look, because that is what cached both the objects and the picture's pixel size. It replaces
+   the list the picture pipeline is looking for, so re-confirm your own list afterwards.
+   Why the tag rather than the cursor: on a screenshot whose crosshair was then located pixel by pixel,
+   asking for the crosshair itself landed 136-143 px off over six runs, always on the same wrong
+   cluster - the "Was this helpful?" row and the `ESC`/`PrSc` keycaps, about 140 px above the thin grey
+   `+` - while claiming 68-88% confidence, and a second look through a crop of that window answered the
+   middle of the crop every single time. Asking for the tag lands 100 px out on that picture at 28%
+   confidence, with its left and right edges within 8 px of the real tag: a box of text, in the right
+   column, about 135 px too high. So read the confidence, and treat `t == b` as the sign that it
+   answered a line rather than a box.
 6. `move { object: "2" }` and `clickreturn { object: "2" }` carry that printed vector to the Macrohelp
    overlay through the overlay's own MCP: open its circle placer, feed the vector, press one key at
    the end. `move` leaves the pointer standing on the thing; `clickreturn` clicks it and blinks the

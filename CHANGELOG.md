@@ -24,24 +24,24 @@
   those routes, returning the drawn picture as an MCP image and letting a cut-out be asked for by an
   entry's title or number; verified end to end over stdio against a live daemon.
 - Gave the look a pointer probe. `/v1/bboxset` now takes a caller-authored list and validates it
-  instead of drafting one, which lets a fixed question be asked word for word: `getmouse` in the MCP
-  asks where the mouse or crosshair is, centred exactly on it, and reports each thing the last look
-  found by how far its centre sits from the pointer's centre in pixels (`2: Green button, -400i+50j`),
-  turning normalized boxes into distances a person can act on.
-- The probe now asks twice, invisibly. The first box sizes a window out of its own weakest edge, the
-  crop of that window is asked where the centre of the crosshair or the tip of the mouse is, and the
-  answer is scaled and shifted back over the whole picture - a coordinate measured over a patch is a
-  finer measurement than one measured over a screen. Two measured failures shaped the sizing: a window
-  too small to contain the target answers confidently about whatever else is inside it, so the span
-  comes from the reported uncertainty rather than from the box, and repeating the whole-picture
-  question only jitters the score around the same wrong point. Scored against a crosshair located
-  pixel by pixel, the second look halves the error when it returns an extent and changes nothing when
-  it returns a point at the middle of its crop; it never makes the answer worse, and the structured
-  reply carries the crop's own box so the difference is visible. Measuring over a patch instead of the
-  whole screen is the gain, since the answer is a fraction of whatever it is measured over; magnifying
-  that patch was tried, measured flat against a crosshair located pixel by pixel, and dropped - the
-  crop goes to the model exactly as cut, and the probe checks its pixel size before trusting the
-  answer back.
+  instead of drafting one, which lets a fixed question be asked word for word over the ordinary picture
+  route - no endpoint of its own, since the machine already asks models about pictures. `getmouse`
+  asks `Where is the box of coordinates? If it exists, it's beside either a crosshair or mouse`, reads
+  the pointer from that tag's top-left corner - the overlay draws the tag below and to the right of the
+  cursor whose numbers it prints - and reports each thing the last look found by how far its centre
+  sits from the pointer's centre in pixels (`2: Green button, -400i+50j`), turning normalized boxes
+  into distances a person can act on. One request, one box, centre-to-centre arithmetic.
+- The question was chosen by measurement, not taste. Asked for the crosshair itself on a screenshot
+  whose mark was then located pixel by pixel, six runs landed 136-143 px off in the same direction, on
+  the "Was this helpful?" row and the `ESC`/`PrSc` keycaps about 140 px above the thin grey `+`, while
+  claiming 68-88%. The probe asked twice for a while - the first box sizing a window from its own
+  weakest edge, the crop asked again, the answer scaled back over the whole picture - and the second
+  look returned the middle of its crop every single time, magnified or not; magnifying that crop was
+  dropped as a resample of information the window already held, since the answer is a fraction of
+  whatever it is measured over. The tag question answers in one pass, 100 px out on that picture at 28%
+  confidence, its left and right edges within 8 px of the real tag - a box of text in the right column,
+  about 135 px too high. Both numbers are in the guide, so a driver reads the confidence and the `t ==
+  b` tell rather than trusting the score.
 - Made the look's text the result: `plan { confirm }` no longer draws the findings over the picture or
   attaches it (`show: true` asks for it, and the drawing pass is skipped when it is not), and the
   printed line that named the drawn file now names the picture itself so `view` still has something to

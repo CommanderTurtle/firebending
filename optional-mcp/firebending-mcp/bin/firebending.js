@@ -39,59 +39,17 @@ function envPositiveInt(name, fallback) {
 const MAX_IMAGES = envPositiveInt("FIREBENDING_MAX_IMAGES", 2);
 
 // The pointer probe, word for word. It is a contract with the vision model rather than a sentence to
-// reword per call, so it is written once here and sent unchanged.
-const MOUSE_QUESTION = "Where is the mouse or crosshair in this image? This would be a perfect center on on the mouse/crosshair itself";
-// The same target again, in a picture small enough that the answer is worth something: measured over
-// a window, a coordinate's rounding error shrinks with the window.
-const MOUSE_FINE_QUESTION = "Where is center of the crosshair, or tip of the mouse, in this image?";
+// reword per call, so it is written once here and sent unchanged - over the ordinary picture route,
+// which is all this needs: the machine already asks models about pictures, and nothing here is a
+// new kind of endpoint.
+//
+// It asks for the box of coordinates rather than for the cursor, because that box is boxed text:
+// bright digits on a plate, four real edges, which is what a vision model can localize. A 2-pixel grey
+// crosshair on near-black is what it confabulates - measured, three passes running, at 143 px off.
+// The overlay draws that tag beside the cursor whose numbers it prints, below and to the right of it,
+// so the tag's top-left corner is the point nearest the cursor, and that corner becomes the pointer.
+const MOUSE_QUESTION = "Where is the box of coordinates? If it exists, it's beside either a crosshair or mouse";
 const mousePlan = (instructions) => ({ objects: [{ name: "mouse", kind: "where", instructions }] });
-
-/// The first answer sizes the window the second one peers through, and the window has to be wider
-/// than the truth is likely to be off - a search that cannot see the target answers confidently about
-/// something else. A weak edge is the only uncertainty the model reports, so the window is sized from
-/// its complement: a sure answer searches a small patch, a shaky one most of the axis. It never goes
-/// below 220 px a side, which is about the smallest thing a vision model reads properly.
-/// Measured on a screenshot with a thin drawn crosshair: the window is deliberately centred on the
-/// first answer, and moving that point off the middle of the crop changed nothing - three probes
-/// returned the first answer's position inside the shifted window, 0.26 to two decimals. So the two
-/// looks are independent and agree, rather than one echoing the other; the crop sharpens the axis the
-/// first answer had quantized (across, 954 px to 970 px against a measured 970.5 px) and leaves an
-/// axis it cannot see alone. Putting the first answer in the middle is the honest framing.
-function pointerWindow(box, weakestEdge, width, height) {
-  const edge = Number.isFinite(weakestEdge) ? Math.min(1, Math.max(0, weakestEdge)) : 0.5;
-  const unsure = (1 - edge) * 0.6;
-  const span = (low, high, pixels) => Math.min(0.9, Math.max(high - low, unsure, 220 / pixels));
-  const slide = (centre, extent) => Math.min(Math.max(centre - extent / 2, 0), Math.max(0, 1 - extent));
-  const across = span(box.left, box.right, width);
-  const down = span(box.top, box.bottom, height);
-  const left = slide((box.left + box.right) / 2, across);
-  const top = slide((box.top + box.bottom) / 2, down);
-  return { left, right: left + across, top, bottom: top + down };
-}
-
-/// A box measured inside the crop, back in whole-picture fractions: the crop is a window, so its
-/// coordinates scale by that window's span and shift by its corner.
-function fitBox(box, window) {
-  const fit = (value, start, extent) => Math.min(1, Math.max(0, start + value * extent));
-  const down = window.bottom - window.top;
-  const across = window.right - window.left;
-  return {
-    top: fit(box.top, window.top, down),
-    bottom: fit(box.bottom, window.top, down),
-    left: fit(box.left, window.left, across),
-    right: fit(box.right, window.left, across),
-  };
-}
-
-/// Which side of the crop the second answer pressed against: the target may sit just outside it.
-function touchesEdge(box) {
-  const sides = [];
-  if (box.top <= 0.02) sides.push("top");
-  if (box.bottom >= 0.98) sides.push("bottom");
-  if (box.left <= 0.02) sides.push("left");
-  if (box.right >= 0.98) sides.push("right");
-  return sides;
-}
 
 /// From the middle of one box to the middle of another, in picture pixels: i across, j downward.
 function offsetFrom(from, to, width, height) {
@@ -645,7 +603,7 @@ export function buildServer() {
 
   server.registerTool("getmouse", {
     title: "Measure everything from the pointer",
-    description: "Ask the fixed pointer question - where the mouse or crosshair is, centred exactly on it - about the picture the last look already read, then report each thing found in that picture by how far its centre sits from the pointer's centre, in pixels: `2: Green button, -400i+50j`, with i across and j downward. The answer is that printed list and the pointer box alone - no picture, no prose. It only works after a look, because that is what cached both the found objects and the picture's pixel size, and the question is always sent unchanged. Asking replaces what the picture pipeline is looking for, so re-confirm your own list afterwards.",
+    description: "Ask the fixed coordinate-tag question - \"Where is the box of coordinates? If it exists, it's beside either a crosshair or mouse\" - about the picture the last look already read, then report each thing found in that picture by how far its centre sits from the pointer's centre, in pixels: `2: Green button, -400i+50j`, with i across and j downward. One model request, no cropping and no second look: the tag is boxed digits, which is what a vision model can localize, while a thin grey crosshair on a dark screen is what it invents instead. The overlay draws that tag below and to the right of the cursor whose numbers it prints, so the pointer is the tag's top-left corner and the offsets stay centre-to-centre arithmetic. The answer is that printed list, the pointer point and the tag it was read from - no picture, no prose. It only works after a look, because that is what cached both the found objects and the picture's pixel size, and the question is always sent unchanged. Asking replaces what the picture pipeline is looking for, so re-confirm your own list afterwards.",
     inputSchema: z.object({
       image: z.string().min(1).optional().describe("Picture file, absolute path. Defaults to the picture the last look read."),
     }),
@@ -668,60 +626,15 @@ export function buildServer() {
       const reason = first.objects?.[0]?.error || "the model gave no box for the pointer";
       return proseResult(`Mouse: not located - ${reason}`, { ok: false, image, error: reason });
     }
-    // The second inference looks through a window the first one sized for itself. The crop is
-    // temporary; the box that comes back is fitted to the whole picture and is the pointer's position.
+    // One ask, one box: the tag of coordinates. The pointer is that tag's top-left corner, kept as a
+    // degenerate box so every offset below stays the same centre-to-centre arithmetic it always was.
     const pointer = {
-      box: coarse.box,
+      box: { top: coarse.box.top, bottom: coarse.box.top, left: coarse.box.left, right: coarse.box.left },
+      tag: coarse.box,
       confidence: coarse.confidence ?? coarse.weakest_edge ?? 0,
       weakest_edge: coarse.weakest_edge ?? null,
       passes: 1,
-      refined: false,
     };
-    if (!Number.isFinite(width) || !Number.isFinite(height)) {
-      pointer.reason = "no pixel size was cached with the picture, so there is nothing to crop by";
-    } else {
-      const window = pointerWindow(coarse.box, coarse.weakest_edge, width, height);
-      const across = window.right - window.left;
-      const down = window.bottom - window.top;
-      // The crop is handed over at its native size: the answer comes back as a fraction of the picture
-      // it was measured over, so every pixel of this window is already in the model's hands and
-      // resampling it could only blur it. What the window buys is a smaller frame - a hundredth of it
-      // is worth this many fewer of the original's pixels than a hundredth of the whole screen.
-      const cut = JSON.parse((await daemon.cut(image, {
-        name: "pointer",
-        top: window.top,
-        bottom: window.bottom,
-        left: window.left,
-        right: window.right,
-        pad: 0,
-        format: "json",
-      }, context.signal)).text());
-      const crop = (cut.crops || [])[0];
-      if (!crop?.path) {
-        pointer.reason = "the crop came back empty";
-      } else if (Math.abs(crop.width - Math.round(across * width)) > 2 || Math.abs(crop.height - Math.round(down * height)) > 2) {
-        // Scaling the answer back is only honest when the crop covers exactly the window asked for.
-        pointer.reason = "the crop did not cover the window it was asked for";
-      } else {
-        await daemon.tell(session, JSON.stringify(mousePlan(MOUSE_FINE_QUESTION)), context.signal);
-        await daemon.tell(session, "Y", context.signal);
-        const second = JSON.parse((await daemon.look(session, crop.path, { crop: 0, annotate: 0 }, context.signal)).text());
-        const fine = (second.objects || []).find((object) => !object.error && object.box);
-        if (!fine) {
-          pointer.reason = second.objects?.[0]?.error || "the second look gave no box";
-        } else {
-          pointer.box = fitBox(fine.box, window);
-          pointer.confidence = fine.confidence ?? fine.weakest_edge ?? pointer.confidence;
-          pointer.weakest_edge = fine.weakest_edge ?? pointer.weakest_edge;
-          pointer.passes = 2;
-          pointer.refined = true;
-          pointer.window = window;
-          pointer.crop = crop.path;
-          pointer.inside_crop = fine.box;
-          pointer.touching = touchesEdge(fine.box);
-        }
-      }
-    }
     const offsets = last.objects.map((object) => ({
       index: object.index,
       name: object.name,
@@ -731,7 +644,11 @@ export function buildServer() {
     const lines = offsets.map((entry) => entry.offset === null
       ? `${entry.index}: ${entry.name}, not located`
       : `${entry.index}: ${entry.name}, ${entry.offset}`);
-    lines.push("", `Mouse: t ${at(pointer.box.top)}, b ${at(pointer.box.bottom)}, l ${at(pointer.box.left)}, r ${at(pointer.box.right)} - Confidence ${Math.round(pointer.confidence * 100)}%`);
+    lines.push(
+      "",
+      `Mouse: t ${at(pointer.box.top)}, b ${at(pointer.box.bottom)}, l ${at(pointer.box.left)}, r ${at(pointer.box.right)} - Confidence ${Math.round(pointer.confidence * 100)}%`,
+      `Coordinate tag: t ${at(coarse.box.top)}, b ${at(coarse.box.bottom)}, l ${at(coarse.box.left)}, r ${at(coarse.box.right)} - the overlay draws it below and right of the cursor, so the pointer is its top-left corner.`,
+    );
     last.mouse = { ...pointer, at: image };
     return proseResult(lines.join("\n"), {
       ok: true,
