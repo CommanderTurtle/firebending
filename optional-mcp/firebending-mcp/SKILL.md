@@ -17,8 +17,10 @@ what it will measure.
 2. More `request` text refines that list ("also the Nvidia logo"); `count: 1-8` sets how many entries
    of the list one picture is checked against; `clear` drops the list; no arguments at all says where
    things stand.
-3. `plan { confirm: true, image: "/abs/path.png" }` - one line per thing with its coordinates, the
-   picture with the findings drawn on it returned as an image, and a file per cut-out.
+3. `plan { confirm: true, image: "/abs/path.png" }` - the printed list is the result: one line per
+   thing the list asked for, coordinates and agreement, in the same shape `getmouse` prints all of its
+   objects, plus a file per cut-out. Nothing is drawn and no picture comes back unless `show: true` is
+   passed; `view` is the optional look afterwards, by path or object.
 4. Afterwards `crop { object: "llama logo" }` or `crop { object: "2" }` cuts one thing out again with
    no second model call, and `view { path: "..." }` shows any file, or one region of it.
 5. `getmouse {}` asks one fixed question - "Where is the mouse or crosshair in this image? This would

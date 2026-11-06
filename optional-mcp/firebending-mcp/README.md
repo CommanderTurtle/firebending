@@ -24,7 +24,7 @@ user   "yes, but also the logo"
 agent  plan { request: "and the Nvidia logo" } -> the list refined from where it was
 user   "go"
 agent  plan { confirm: true, image: "/p/x.png" }
-       -> coordinates per object, the picture with them drawn on it, a file per cut-out
+       -> one line per object with its coordinates; the drawn picture only with show: true
 agent  crop { object: "logo" }                 -> that thing alone, shown
 ```
 

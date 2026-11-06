@@ -169,12 +169,40 @@ function objectLine(object) {
   return `${object.index}. ${object.name} - found at ${region}; weakest edge ${at(object.weakest_edge, 3)}, agreement ${at(object.confidence, 3)}`;
 }
 
+/// Pixel size straight out of a picture's header - a PNG's IHDR, a JPEG's start-of-frame. Fractions
+/// only become distances once the picture they were measured over has a size, and a look that skipped
+/// the drawing never learned one from the daemon.
+function headerSize(path) {
+  try {
+    const head = readFileSync(path);
+    if (head.length >= 24 && head[0] === 0x89 && head[1] === 0x50) {
+      return { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
+    }
+    if (head.length >= 4 && head[0] === 0xff && head[1] === 0xd8) {
+      for (let at = 2; at + 9 < head.length; ) {
+        if (head[at] !== 0xff) {
+          at += 1;
+        } else if (head[at + 1] >= 0xc0 && head[at + 1] <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(head[at + 1])) {
+          return { width: head.readUInt16BE(at + 7), height: head.readUInt16BE(at + 5) };
+        } else {
+          at += 2 + head.readUInt16BE(at + 2);
+        }
+      }
+    }
+  } catch {
+    // An unreadable picture has no size, and the caller says so in its own words.
+  }
+  return null;
+}
+
 function reportText(answer) {
   const lines = [`## What was found in the picture: ${answer.answered} of ${answer.asked}`, ""];
   for (const object of answer.objects) lines.push(objectLine(object));
   lines.push("");
   if (answer.annotated) {
     lines.push(`The picture with what was found drawn on it: ${answer.annotated.path} (${answer.annotated.width}x${answer.annotated.height})`);
+  } else if (answer.picture?.path) {
+    lines.push(`The picture: ${answer.picture.path} - view it, or pass show to plan next time, to see the findings drawn over it.`);
   }
   for (const crop of answer.crops || []) {
     lines.push(`Cut-out ${crop.name || ""}: ${crop.path} (${crop.width}x${crop.height})`);
@@ -349,7 +377,7 @@ export function buildServer() {
       clear: z.boolean().optional().describe("Drop the list, its history and what is running."),
       cut_out: z.boolean().default(true).describe("With confirm: also cut each found thing out of the picture as its own file."),
       pad: z.number().min(0).max(1).default(0.05).describe("With confirm: widen each cut-out by this fraction of its own size."),
-      show: z.boolean().default(true).describe("With confirm: return the picture with the findings drawn on it, so it can be seen."),
+      show: z.boolean().default(false).describe("With confirm: draw the findings over the picture and return it too. Off by default - the printed list of what was found is the result, and view is the optional look."),
     }),
     annotations: { openWorldHint: true },
   }, guarded(async (args, context) => {
@@ -375,12 +403,16 @@ export function buildServer() {
       const answer = JSON.parse((await daemon.look(session, args.image, {
         crop: args.cut_out ? 1 : 0,
         pad: args.pad,
+        annotate: args.show ? 1 : 0,
       }, context.signal)).text());
       last = {
         picture: answer.picture?.path || args.image,
         annotated: answer.annotated?.path || null,
-        // The pixel size the coordinates turn into; the drawn picture keeps the source's own size.
-        dims: { width: answer.annotated?.width, height: answer.annotated?.height },
+        // The pixel size the coordinates turn into. The drawn picture keeps the source's own size; when
+        // the drawing was skipped the header of the source answers it instead.
+        dims: answer.annotated
+          ? { width: answer.annotated.width, height: answer.annotated.height }
+          : headerSize(answer.picture?.path || args.image) || { width: null, height: null },
         objects: answer.objects.map((object) => ({
           index: object.index,
           name: object.name,

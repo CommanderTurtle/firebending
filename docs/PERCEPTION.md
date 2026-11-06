@@ -196,8 +196,9 @@ model to place rather than guess at - the answer stays a fraction of what it was
 seeing, not arithmetic - a PIL resize, no model, no measurement.
 
 `optional-mcp/firebending-mcp` exposes these routes as an MCP under plain tool names (`plan`,
-`crop`, `view`, plus sectioned report readers), renders the drawn picture back as an image so the
-client shows it, and remembers the last answer so the next sentence can be "crop the llama logo" or
+`crop`, `view`, plus sectioned report readers), prints what was found as text - that list is the
+result - and only draws the findings over the picture for the client when `show` is passed or `view`
+is called. It remembers the last answer so the next sentence can be "crop the llama logo" or
 "crop 2".
 
 ## Cereal: image → ASCII → Jev

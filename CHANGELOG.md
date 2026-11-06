@@ -48,6 +48,11 @@
   `(970.0, 382.0)`, `(969.9, 385.5)`, 139 to 143 px from the mark, where the un-magnified crop had left
   it: more pixels sharpen what the model can see and cannot move what it reads out of the middle, which
   is what `inside_crop` is there to expose.
+- Made the look's text the result: `plan { confirm }` no longer draws the findings over the picture or
+  attaches it (`show: true` asks for it, and the drawing pass is skipped when it is not), and the
+  printed line that named the drawn file now names the picture itself so `view` still has something to
+  open. A look that only wants coordinates no longer pays for a picture nobody asked to see, and a
+  driver is not steered into a second look at an image it never requested.
 - Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
   picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
   labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is
