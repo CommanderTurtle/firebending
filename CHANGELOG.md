@@ -28,6 +28,16 @@
   asks where the mouse or crosshair is, centred exactly on it, and reports each thing the last look
   found by how far its centre sits from the pointer's centre in pixels (`2: Green button, -400i+50j`),
   turning normalized boxes into distances a person can act on.
+- The probe now asks twice, invisibly. The first box sizes a window out of its own weakest edge, the
+  crop of that window is asked where the centre of the crosshair or the tip of the mouse is, and the
+  answer is scaled and shifted back over the whole picture - a coordinate measured over a patch is a
+  finer measurement than one measured over a screen. Two measured failures shaped the sizing: a window
+  too small to contain the target answers confidently about whatever else is inside it, so the span
+  comes from the reported uncertainty rather than from the box, and repeating the whole-picture
+  question only jitters the score around the same wrong point. Scored against a crosshair located
+  pixel by pixel, the second look halves the error when it returns an extent and changes nothing when
+  it returns a point at the middle of its crop; it never makes the answer worse, and the structured
+  reply carries the crop's own box so the difference is visible.
 - Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
   picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
   labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is

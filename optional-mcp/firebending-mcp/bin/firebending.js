@@ -40,7 +40,57 @@ const MAX_IMAGES = envPositiveInt("FIREBENDING_MAX_IMAGES", 2);
 // The pointer probe, word for word. It is a contract with the vision model rather than a sentence to
 // reword per call, so it is written once here and sent unchanged.
 const MOUSE_QUESTION = "Where is the mouse or crosshair in this image? This would be a perfect center on on the mouse/crosshair itself";
-const MOUSE_PLAN = { objects: [{ name: "mouse", kind: "where", instructions: MOUSE_QUESTION }] };
+// The same target again, in a picture small enough that the answer is worth something: measured over
+// a window, a coordinate's rounding error shrinks with the window.
+const MOUSE_FINE_QUESTION = "Where is center of the crosshair, or tip of the mouse, in this image?";
+const mousePlan = (instructions) => ({ objects: [{ name: "mouse", kind: "where", instructions }] });
+
+/// The first answer sizes the window the second one peers through, and the window has to be wider
+/// than the truth is likely to be off - a search that cannot see the target answers confidently about
+/// something else. A weak edge is the only uncertainty the model reports, so the window is sized from
+/// its complement: a sure answer searches a small patch, a shaky one most of the axis. It never goes
+/// below 220 px a side, which is about the smallest thing a vision model reads properly.
+/// Measured on a screenshot with a thin drawn crosshair: the window is deliberately centred on the
+/// first answer, and moving that point off the middle of the crop changed nothing - three probes
+/// returned the first answer's position inside the shifted window, 0.26 to two decimals. So the two
+/// looks are independent and agree, rather than one echoing the other; the crop sharpens the axis the
+/// first answer had quantized (across, 954 px to 970 px against a measured 970.5 px) and leaves an
+/// axis it cannot see alone. Putting the first answer in the middle is the honest framing.
+function pointerWindow(box, weakestEdge, width, height) {
+  const edge = Number.isFinite(weakestEdge) ? Math.min(1, Math.max(0, weakestEdge)) : 0.5;
+  const unsure = (1 - edge) * 0.6;
+  const span = (low, high, pixels) => Math.min(0.9, Math.max(high - low, unsure, 220 / pixels));
+  const slide = (centre, extent) => Math.min(Math.max(centre - extent / 2, 0), Math.max(0, 1 - extent));
+  const across = span(box.left, box.right, width);
+  const down = span(box.top, box.bottom, height);
+  const left = slide((box.left + box.right) / 2, across);
+  const top = slide((box.top + box.bottom) / 2, down);
+  return { left, right: left + across, top, bottom: top + down };
+}
+
+/// A box measured inside the crop, back in whole-picture fractions: the crop is a window, so its
+/// coordinates scale by that window's span and shift by its corner.
+function fitBox(box, window) {
+  const fit = (value, start, extent) => Math.min(1, Math.max(0, start + value * extent));
+  const down = window.bottom - window.top;
+  const across = window.right - window.left;
+  return {
+    top: fit(box.top, window.top, down),
+    bottom: fit(box.bottom, window.top, down),
+    left: fit(box.left, window.left, across),
+    right: fit(box.right, window.left, across),
+  };
+}
+
+/// Which side of the crop the second answer pressed against: the target may sit just outside it.
+function touchesEdge(box) {
+  const sides = [];
+  if (box.top <= 0.02) sides.push("top");
+  if (box.bottom >= 0.98) sides.push("bottom");
+  if (box.left <= 0.02) sides.push("left");
+  if (box.right >= 0.98) sides.push("right");
+  return sides;
+}
 
 /// From the middle of one box to the middle of another, in picture pixels: i across, j downward.
 function offsetFrom(from, to, width, height) {
@@ -455,35 +505,84 @@ export function buildServer() {
     }
     const image = args.image || last.picture;
     if (!image) throw new Error("There is no picture to probe: pass image, or run a look on one first.");
-    await daemon.tell(session, JSON.stringify(MOUSE_PLAN), context.signal);
+    const width = Number(last.dims?.width);
+    const height = Number(last.dims?.height);
+    await daemon.tell(session, JSON.stringify(mousePlan(MOUSE_QUESTION)), context.signal);
     await daemon.tell(session, "Y", context.signal);
     // Nothing is drawn: this tool answers with vectors, and the pixel size comes from the look that
     // cached the objects.
-    const report = JSON.parse((await daemon.look(session, image, { crop: 0, annotate: 0 }, context.signal)).text());
-    const mouse = (report.objects || []).find((object) => !object.error && object.box);
-    const width = Number(last.dims?.width);
-    const height = Number(last.dims?.height);
-    if (!mouse) {
-      const reason = report.objects?.[0]?.error || "the model gave no box for the pointer";
+    const first = JSON.parse((await daemon.look(session, image, { crop: 0, annotate: 0 }, context.signal)).text());
+    const coarse = (first.objects || []).find((object) => !object.error && object.box);
+    if (!coarse) {
+      const reason = first.objects?.[0]?.error || "the model gave no box for the pointer";
       return proseResult(`Mouse: not located - ${reason}`, { ok: false, image, error: reason });
     }
-    const confidence = mouse.confidence ?? mouse.weakest_edge ?? 0;
+    // The second inference looks through a window the first one sized for itself. The crop is
+    // temporary; the box that comes back is fitted to the whole picture and is the pointer's position.
+    const pointer = {
+      box: coarse.box,
+      confidence: coarse.confidence ?? coarse.weakest_edge ?? 0,
+      weakest_edge: coarse.weakest_edge ?? null,
+      passes: 1,
+      refined: false,
+    };
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      pointer.reason = "no pixel size was cached with the picture, so there is nothing to crop by";
+    } else {
+      const window = pointerWindow(coarse.box, coarse.weakest_edge, width, height);
+      const cut = JSON.parse((await daemon.cut(image, {
+        name: "pointer",
+        top: window.top,
+        bottom: window.bottom,
+        left: window.left,
+        right: window.right,
+        pad: 0,
+        format: "json",
+      }, context.signal)).text());
+      const crop = (cut.crops || [])[0];
+      const across = window.right - window.left;
+      const down = window.bottom - window.top;
+      if (!crop?.path) {
+        pointer.reason = "the crop came back empty";
+      } else if (Math.abs(crop.width - across * width) > 2 || Math.abs(crop.height - down * height) > 2) {
+        // Scaling the answer back is only honest when the crop covers exactly the window asked for.
+        pointer.reason = "the crop did not cover the window it was asked for";
+      } else {
+        await daemon.tell(session, JSON.stringify(mousePlan(MOUSE_FINE_QUESTION)), context.signal);
+        await daemon.tell(session, "Y", context.signal);
+        const second = JSON.parse((await daemon.look(session, crop.path, { crop: 0, annotate: 0 }, context.signal)).text());
+        const fine = (second.objects || []).find((object) => !object.error && object.box);
+        if (!fine) {
+          pointer.reason = second.objects?.[0]?.error || "the second look gave no box";
+        } else {
+          pointer.box = fitBox(fine.box, window);
+          pointer.confidence = fine.confidence ?? fine.weakest_edge ?? pointer.confidence;
+          pointer.weakest_edge = fine.weakest_edge ?? pointer.weakest_edge;
+          pointer.passes = 2;
+          pointer.refined = true;
+          pointer.window = window;
+          pointer.crop = crop.path;
+          pointer.inside_crop = fine.box;
+          pointer.touching = touchesEdge(fine.box);
+        }
+      }
+    }
     const offsets = last.objects.map((object) => ({
       index: object.index,
       name: object.name,
-      offset: object.error ? null : offsetFrom(mouse.box, object.box, width, height),
+      offset: object.error ? null : offsetFrom(pointer.box, object.box, width, height),
       error: object.error || null,
     }));
     const lines = offsets.map((entry) => entry.offset === null
       ? `${entry.index}: ${entry.name}, not located`
       : `${entry.index}: ${entry.name}, ${entry.offset}`);
-    lines.push("", `Mouse: t ${at(mouse.box.top)}, b ${at(mouse.box.bottom)}, l ${at(mouse.box.left)}, r ${at(mouse.box.right)} - Confidence ${Math.round(confidence * 100)}%`);
-    last.mouse = { box: mouse.box, confidence, at: image };
+    lines.push("", `Mouse: t ${at(pointer.box.top)}, b ${at(pointer.box.bottom)}, l ${at(pointer.box.left)}, r ${at(pointer.box.right)} - Confidence ${Math.round(pointer.confidence * 100)}%`);
+    last.mouse = { ...pointer, at: image };
     return proseResult(lines.join("\n"), {
       ok: true,
       image,
       pixels: { width: Number.isFinite(width) ? width : null, height: Number.isFinite(height) ? height : null },
-      mouse: { box: mouse.box, confidence, weakest_edge: mouse.weakest_edge ?? null },
+      mouse: pointer,
       offsets,
     });
   }));
