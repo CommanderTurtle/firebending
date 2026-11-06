@@ -144,6 +144,26 @@ module Bbox =
                         let lines = listing saved
                         let taken = min (count()) lines.Length
                         do! Formatting.write context 200 ($"One look per picture will check these, in this order (the first {taken}):\n" + String.concat "\n" lines[0..taken-1] + "\n\n" + Inference.codeBlock "json" (saved.GetRawText()))
+                    | text when text.StartsWith "{" || text.StartsWith "[" ->
+                        // A caller may supply the list itself - a fixed question nobody should reword.
+                        // It is validated exactly as a drafted plan would be, then held for review.
+                        try
+                            // The matched text is upper-cased for the Y/N comparison; the list itself is
+                            // read from the request unchanged, or its member names would lie.
+                            use doc = JsonDocument.Parse(input.Trim())
+                            targets doc.RootElement |> ignore
+                            let saved = doc.RootElement.Clone()
+                            lock state.Sync (fun () -> state.Draft <- Some saved)
+                            let lines = listing saved
+                            let taken = min (count()) lines.Length
+                            do! Formatting.write context 200 ("What I will look for, most likely to be there first:\n"
+                                + String.concat "\n" lines
+                                + $"\n\nY starts looking; N drops this. One look checks the first {taken} of these.\n")
+                        with
+                        | :? JsonException ->
+                            do! Formatting.write context 400 "That is not valid JSON. Send {\"objects\":[{\"name\":\"the cursor\",\"kind\":\"where\",\"instructions\":\"Where is the cursor?\"}]}.\n"
+                        | :? ArgumentException as ex ->
+                            do! Formatting.write context 400 $"That list is not usable: {ex.Message}\n"
                     | _ ->
                         do! Inference.inLane (fun () -> task {
                             let epoch, history = lock state.Sync (fun () -> state.Epoch, state.History.ToArray())

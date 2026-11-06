@@ -21,6 +21,15 @@ what it will measure.
    picture with the findings drawn on it returned as an image, and a file per cut-out.
 4. Afterwards `crop { object: "llama logo" }` or `crop { object: "2" }` cuts one thing out again with
    no second model call, and `view { path: "..." }` shows any file, or one region of it.
+5. `getmouse {}` asks one fixed question - "Where is the mouse or crosshair in this image? This would
+   be a perfect center on on the mouse/crosshair itself" - about the picture the last look read, then
+   prints each thing it had found by how far its centre sits from the pointer's centre, in pixels:
+   `2: Green button, -400i+50j`, with `i` across and `j` downward, and the pointer's own box and
+   confidence underneath. Nothing is drawn and no picture comes back - the marked-up view of the
+   pointer is a person's, seen through the command line, never handed to the model. It only works
+   after a look, because that is what cached both the objects and the picture's pixel size, and the
+   question is always sent unchanged. It replaces the list the picture pipeline is looking for, so
+   re-confirm your own list afterwards.
 
 One list entry is one request to the model, taken one at a time. A thing the model refuses to locate
 gets its own "not found" line and no coordinates at all, while the others still answer. Coordinates
@@ -63,6 +72,7 @@ accuracy and it is not calibration, so a confident wrong answer is still possibl
 | ------------------------------------------------------ | ------------------------------------------- |
 | find or mark things in a picture                       | `plan` (then confirm with the image)        |
 | cut a found thing out, again, by name or number        | `crop`                                      |
+| how far is each thing from the pointer, in pixels      | `getmouse` (after a look)                   |
 | show a picture file, or one region of it               | `view`                                      |
 | sort a long list into fixed labels                     | `categorize`                                |
 | rate severity, yes/no each item, judge against a rubric| `decide`                                    |

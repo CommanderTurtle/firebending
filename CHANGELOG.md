@@ -23,6 +23,11 @@
 - Added `optional-mcp/firebending-mcp`: `plan`, `crop`, `view` and sectioned report readers over
   those routes, returning the drawn picture as an MCP image and letting a cut-out be asked for by an
   entry's title or number; verified end to end over stdio against a live daemon.
+- Gave the look a pointer probe. `/v1/bboxset` now takes a caller-authored list and validates it
+  instead of drafting one, which lets a fixed question be asked word for word: `getmouse` in the MCP
+  asks where the mouse or crosshair is, centred exactly on it, and reports each thing the last look
+  found by how far its centre sits from the pointer's centre in pixels (`2: Green button, -400i+50j`),
+  turning normalized boxes into distances a person can act on.
 - Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
   picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
   labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is

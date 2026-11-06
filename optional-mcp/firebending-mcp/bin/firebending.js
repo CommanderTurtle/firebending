@@ -37,6 +37,21 @@ function envPositiveInt(name, fallback) {
 // A picture in a reply is worth a lot of context; the newest few are enough and the rest stay on disk.
 const MAX_IMAGES = envPositiveInt("FIREBENDING_MAX_IMAGES", 2);
 
+// The pointer probe, word for word. It is a contract with the vision model rather than a sentence to
+// reword per call, so it is written once here and sent unchanged.
+const MOUSE_QUESTION = "Where is the mouse or crosshair in this image? This would be a perfect center on on the mouse/crosshair itself";
+const MOUSE_PLAN = { objects: [{ name: "mouse", kind: "where", instructions: MOUSE_QUESTION }] };
+
+/// From the middle of one box to the middle of another, in picture pixels: i across, j downward.
+function offsetFrom(from, to, width, height) {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return "unknown distance";
+  const across = Math.round(((to.left + to.right) / 2 - (from.left + from.right) / 2) * width);
+  const down = Math.round(((to.top + to.bottom) / 2 - (from.top + from.bottom) / 2) * height);
+  const i = across < 0 ? `-${Math.abs(across)}` : `${across}`;
+  const j = down < 0 ? `-${Math.abs(down)}` : `+${down}`;
+  return `${i}i${j}j`;
+}
+
 function images(files) {
   return (files || []).slice(0, MAX_IMAGES).map(imageBlock).filter(Boolean);
 }
@@ -314,6 +329,8 @@ export function buildServer() {
       last = {
         picture: answer.picture?.path || args.image,
         annotated: answer.annotated?.path || null,
+        // The pixel size the coordinates turn into; the drawn picture keeps the source's own size.
+        dims: { width: answer.annotated?.width, height: answer.annotated?.height },
         objects: answer.objects.map((object) => ({
           index: object.index,
           name: object.name,
@@ -423,6 +440,52 @@ export function buildServer() {
     const report = JSON.parse((await daemon.cut(args.path, { format: "json", pad: args.pad, boxes: JSON.stringify(many) }, context.signal)).text());
     const crop = report.crops[0];
     return proseResult(`${args.path}, ${wanted?.name || "that region"}: ${crop.path} (${crop.width}x${crop.height})`, { ok: true, ...crop }, [crop.path]);
+  }));
+
+  server.registerTool("getmouse", {
+    title: "Measure everything from the pointer",
+    description: "Ask the fixed pointer question - where the mouse or crosshair is, centred exactly on it - about the picture the last look already read, then report each thing found in that picture by how far its centre sits from the pointer's centre, in pixels: `2: Green button, -400i+50j`, with i across and j downward. The answer is that printed list and the pointer box alone - no picture, no prose. It only works after a look, because that is what cached both the found objects and the picture's pixel size, and the question is always sent unchanged. Asking replaces what the picture pipeline is looking for, so re-confirm your own list afterwards.",
+    inputSchema: z.object({
+      image: z.string().min(1).optional().describe("Picture file, absolute path. Defaults to the picture the last look read."),
+    }),
+    annotations: { openWorldHint: true },
+  }, guarded(async (args, context) => {
+    if (!last?.objects?.length) {
+      throw new Error("Nothing has been looked for in a picture yet: send plan a request, confirm it with an image, then call getmouse.");
+    }
+    const image = args.image || last.picture;
+    if (!image) throw new Error("There is no picture to probe: pass image, or run a look on one first.");
+    await daemon.tell(session, JSON.stringify(MOUSE_PLAN), context.signal);
+    await daemon.tell(session, "Y", context.signal);
+    // Nothing is drawn: this tool answers with vectors, and the pixel size comes from the look that
+    // cached the objects.
+    const report = JSON.parse((await daemon.look(session, image, { crop: 0, annotate: 0 }, context.signal)).text());
+    const mouse = (report.objects || []).find((object) => !object.error && object.box);
+    const width = Number(last.dims?.width);
+    const height = Number(last.dims?.height);
+    if (!mouse) {
+      const reason = report.objects?.[0]?.error || "the model gave no box for the pointer";
+      return proseResult(`Mouse: not located - ${reason}`, { ok: false, image, error: reason });
+    }
+    const confidence = mouse.confidence ?? mouse.weakest_edge ?? 0;
+    const offsets = last.objects.map((object) => ({
+      index: object.index,
+      name: object.name,
+      offset: object.error ? null : offsetFrom(mouse.box, object.box, width, height),
+      error: object.error || null,
+    }));
+    const lines = offsets.map((entry) => entry.offset === null
+      ? `${entry.index}: ${entry.name}, not located`
+      : `${entry.index}: ${entry.name}, ${entry.offset}`);
+    lines.push("", `Mouse: t ${at(mouse.box.top)}, b ${at(mouse.box.bottom)}, l ${at(mouse.box.left)}, r ${at(mouse.box.right)} - Confidence ${Math.round(confidence * 100)}%`);
+    last.mouse = { box: mouse.box, confidence, at: image };
+    return proseResult(lines.join("\n"), {
+      ok: true,
+      image,
+      pixels: { width: Number.isFinite(width) ? width : null, height: Number.isFinite(height) ? height : null },
+      mouse: { box: mouse.box, confidence, weakest_edge: mouse.weakest_edge ?? null },
+      offsets,
+    });
   }));
 
   /// Ask the agreed framework about 1-N states, chunked under the daemon's 32-state / 256-decision
