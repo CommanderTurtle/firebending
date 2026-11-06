@@ -23,6 +23,19 @@
 - Added `optional-mcp/firebending-mcp`: `plan`, `crop`, `view` and sectioned report readers over
   those routes, returning the drawn picture as an MCP image and letting a cut-out be asked for by an
   entry's title or number; verified end to end over stdio against a live daemon.
+- One agreed list now runs over a group of pictures in a single confirmed call: `plan { confirm,
+  image: "/a/folder" }` (or `images: [...]` of files and folders, mixed) asks that list of every
+  picture in name order up to 24, one look each, printing its own section per picture and a tally above
+  the report id — `rocket picture: there in 1, not there in 2` — and a picture that failed to measure is
+  a line of its own rather than losing the ones that answered. `rerun` takes the same group. Classifying
+  a directory used to mean the model writing its own loop over one-picture calls; the agreement, the
+  sections and the count are the point of doing it in one.
+- Split what a look hands over: `view` now prints the measurement the way the command line does - one
+  line per thing with its coordinates, confidence and presence, never the pointer's own box - and asks
+  nothing of the model, while `preview` answers the `Preview (yes/no)` a look now ends with by drawing
+  the coordinates it already holds. `/v1/bboxcrop?draw=1` makes that possible: it paints caller-supplied
+  boxes over a picture with no model involved, so a preview can no longer move a measurement, which the
+  old redraw-through-`view` could and did.
 - Gave the look a pointer probe. `/v1/bboxset` now takes a caller-authored list and validates it
   instead of drafting one, which lets a fixed question be asked word for word over the ordinary picture
   route - no endpoint of its own, since the machine already asks models about pictures. `getmouse`

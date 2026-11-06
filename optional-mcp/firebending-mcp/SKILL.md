@@ -1,12 +1,41 @@
 ---
 name: firebending
-description: Find named things in a picture, measure them from the pointer, or judge a long list of things under one agreed set of questions, through the firebending MCP - plan/crop/view/getmouse for pictures, move/clickreturn for the pointer, decide/categorize for text. Read before locating objects in an image, cutting found things out, aiming the pointer at a measured offset, labelling a batch of items, or asking the local model to score or classify more than a handful of things.
+description: Find named things in a picture, measure them from the pointer, or judge a long list of things under one agreed set of questions, through the firebending MCP - plan/view/preview/crop/getmouse for pictures, move/clickreturn for the pointer, decide/categorize for text. Read before locating objects in an image, cutting found things out, aiming the pointer at a measured offset, labelling a batch of items, or asking the local model to score or classify more than a handful of things.
 ---
 
 # Firebending: pictures, the pointer, and judgements
 
 Nothing is measured until the model's list of things to look for has been shown and agreed. The
 Jev rules below come first because both pipelines sit on that same self-hosted judge.
+
+## Do this first
+
+Measuring anything takes two calls, and the first one must be shown to the user before the second:
+
+1. `plan { request: "<the user's own words>" }` -> it prints the list it means to check. **Show that
+   list.** Another `request` refines it, `count: 1-8` sets how many one look checks, `clear` drops it.
+2. `plan { confirm: true, image: "/abs/path.png" }` -> one line per thing with its box, weakest edge
+   and agreement. `show: true` draws them during the look and returns the picture with the answer.
+
+What you do with the answer, and what each one costs:
+
+| You want                                       | Call                          | Costs            |
+| ---------------------------------------------- | ----------------------------- | ---------------- |
+| those numbers again, as text                   | `view {}`                     | nothing          |
+| the picture with those very boxes drawn        | `preview {}`                  | one drawing call |
+| one thing cut out                              | `crop { object: "2" }`        | nothing          |
+| how far each thing is from the pointer, in px  | `getmouse {}`                 | one model call   |
+| the pointer on the thing, or a click           | `move` / `clickreturn`        | nothing          |
+| the same questions again, to see a box hold    | `rerun {}`                    | one per thing    |
+| the same question over a folder of pictures    | `plan { confirm, image: "/dir" }` | one look per picture |
+
+A folder, or `images: [...]` of files and folders, is answered picture by picture against the one list
+you already agreed - each picture gets its own report section and the reply ends with a tally (`rocket
+picture: there in 1, not there in 2`). That is the classification route; do not write the loop yourself.
+
+A look ends by asking `Preview (yes/no)` - answer it, don't guess: `preview` paints the coordinates it
+already holds, so nothing moves and no model is asked. Everything below is why the answers read the
+way they do.
 
 ## Jev: the judge underneath both pipelines
 
@@ -37,14 +66,20 @@ the `systemone-judge` skill.
    weakest edge and agreement. Coordinates are fractions of the picture: `0.00` is its top-left
    corner, `1.00` its bottom-right. Nothing is drawn over the picture and no image comes back unless
    `show: true` is passed.
-3. `view {}` is the preview: the picture with every found thing boxed - the same marked-up file
-   `show: true` returns. If that pass drew it, the file is shown as it stands; if it did not, the agreed
-   questions are asked once more with the drawing on, which is what `show: true` would have paid for
-   then. The reply says which happened, and a re-ask can move the boxes. `view { path }` shows another
-   file, `view { path, object: "2" }` cuts a part of it out - that route measures nothing.
-4. `crop { object: "nvidia logo" }` or `crop { object: "2" }` cuts a found thing out again with no
+3. `plan { confirm: true, image: "/abs/folder" }`, or `images: ["/a.png", "/folder"]`, asks that same
+   agreed list of every picture in the group - up to 24 in name order, one look each - and prints a
+   section per picture plus a tally. The newest picture measured is what `crop`, `view`, `preview` and
+   `getmouse` work on afterwards; a picture that failed to measure is a line of its own and the rest
+   still answer.
+4. `view {}` prints where every box came out, the way the command line prints it: one line per thing
+   with `t/b/l/r`, its `Confidence`, and its `Presence` when the question was yes/no. The pointer's own
+   box is never in it, nothing is measured and nothing is drawn, so it costs nothing and repeats
+   exactly. `preview {}` is the yes to the look's gate: those same coordinates go to the drawing helper,
+   so no box can move. `view { path }` shows another file, `view { path, object: "2" }` cuts a part of
+   it out - that route measures nothing.
+5. `crop { object: "nvidia logo" }` or `crop { object: "2" }` cuts a found thing out again with no
    second model call.
-5. `rerun {}` is the rerun button: the same list asked of the same picture again - no rewrite, no new
+6. `rerun {}` is the rerun button: the same list asked of the same picture again - no rewrite, no new
    agreement - printed exactly as the look was, one line per thing with its box and agreement. Nothing
    is drawn and no picture comes back unless `show: true`, which is what makes it cheap to press. It
    costs one request per entry, so press it when a thing came back missing or with a weak edge and
@@ -105,7 +140,8 @@ holds, or an expected score with the level named in the model's own words.
 | The ask                                         | Tool                                      |
 | ----------------------------------------------- | ----------------------------------------- |
 | find or mark things in a picture                | `plan`, then confirm with the image       |
-| see the picture with everything boxed           | `view` (no arguments)                     |
+| print where every box came out, as text       | `view` (no arguments)                     |
+| the picture with those boxes drawn, no remeasure | `preview` (no arguments)               |
 | cut a found thing out again, by name or number  | `crop`                                    |
 | the same questions again, to see if a box holds | `rerun`                                   |
 | how far is each thing from the pointer, in px   | `getmouse` (after a look)                 |

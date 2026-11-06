@@ -76,6 +76,17 @@ export class Daemon {
     return this.request("/v1/bboxcrop", { query: options, body: image, type: "text/plain; charset=utf-8", signal });
   }
 
+  /// Those boxes drawn over the whole picture: one drawing call, no model asked, so a preview cannot
+  /// move a measured box.
+  draw(image, boxes, signal) {
+    return this.request("/v1/bboxcrop", {
+      query: { format: "json", draw: 1, boxes: JSON.stringify(boxes) },
+      body: image,
+      type: "text/plain; charset=utf-8",
+      signal,
+    });
+  }
+
   /// One message to the decision framework: a task, a refinement, "Y" to agree, or "N" to drop it.
   tellJev(session, message, signal) {
     return this.request("/v1/jevset", { query: { session }, body: message, type: "text/plain; charset=utf-8", signal });

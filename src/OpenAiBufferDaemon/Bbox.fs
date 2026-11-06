@@ -490,7 +490,7 @@ module Bbox =
         Inference.runUnlocked options stopping (fun ct context -> (task {
             let query key = string context.Request.Query.[key]
             if context.Request.Method = "GET" then
-                do! Formatting.write context 200 "POST a picture to /v1/bboxcrop with the box in the query: ?top=0.69&bottom=0.82&left=0.09&right=0.32 (a fraction 0-1 or a pixel count), or ?boxes=[{\"name\":\"cta\",\"box\":{\"top\":0.1,\"bottom\":0.4,\"left\":0.2,\"right\":0.8}}] for up to 8 at once. ?pad=0.05 widens each side by that fraction of itself; format=png (default) returns the first crop, ?format=json writes every crop to a file and lists them.\n"
+                do! Formatting.write context 200 "POST a picture to /v1/bboxcrop with the box in the query: ?top=0.69&bottom=0.82&left=0.09&right=0.32 (a fraction 0-1 or a pixel count), or ?boxes=[{\"name\":\"cta\",\"box\":{\"top\":0.1,\"bottom\":0.4,\"left\":0.2,\"right\":0.8}}] for up to 8 at once. ?pad=0.05 widens each side by that fraction of itself; format=png (default) returns the first crop, ?format=json writes every crop to a file and lists them. ?draw=1 draws those boxes over the whole picture instead of cutting anything, which is a preview that asks no model and cannot move a measured box.\n"
             else
                 let format = if query "format" = "" then "png" else (query "format").ToLowerInvariant()
                 if not (List.contains format [ "png"; "json" ]) then Inference.fail 400 "format must be png or json."
@@ -550,22 +550,43 @@ module Bbox =
                 let! bytes = Inference.image ct context
                 let pad = padOf query
                 let inlineBytes = query "inline" = "1"
-                let! crops = cut options (boxes.GetRawText()) pad bytes ct
-                match format with
-                | "json" ->
-                    context.Response.ContentType <- "application/json; charset=utf-8"
-                    context.Response.Headers.CacheControl <- "no-store"
-                    let payload =
-                        {| cropped = crops.Length
-                           pad = pad
-                           crops = List.map (cropOf inlineBytes) crops |}
-                    do! context.Response.WriteAsync(Json.serialize payload, ct)
-                | _ ->
-                    match crops with
-                    | [] -> Inference.fail 503 "The crop helper returned no picture."
-                    | first :: _ ->
+                if query "draw" = "1" then
+                    // The same boxes drawn instead of cut, from coordinates the caller already holds:
+                    // no model is asked, so a preview can never move what was measured.
+                    let! art = print options (boxes.GetRawText()) bytes ct
+                    let base64 = if inlineBytes then Some(File.ReadAllBytes art.path |> Convert.ToBase64String) else None
+                    match format with
+                    | "json" ->
+                        context.Response.ContentType <- "application/json; charset=utf-8"
+                        context.Response.Headers.CacheControl <- "no-store"
+                        let payload =
+                            {| drawn = 1
+                               annotated =
+                                   {| path = art.path; width = art.width; height = art.height; bytes = art.bytes
+                                      image_base64 = base64 |} |}
+                        do! context.Response.WriteAsync(Json.serialize payload, ct)
+                    | _ ->
                         context.Response.ContentType <- "image/png"
                         context.Response.Headers.CacheControl <- "no-store"
-                        let payload = File.ReadAllBytes first.Path
+                        let payload = File.ReadAllBytes art.path
                         do! context.Response.Body.WriteAsync(ReadOnlyMemory payload, ct)
+                else
+                    let! crops = cut options (boxes.GetRawText()) pad bytes ct
+                    match format with
+                    | "json" ->
+                        context.Response.ContentType <- "application/json; charset=utf-8"
+                        context.Response.Headers.CacheControl <- "no-store"
+                        let payload =
+                            {| cropped = crops.Length
+                               pad = pad
+                               crops = List.map (cropOf inlineBytes) crops |}
+                        do! context.Response.WriteAsync(Json.serialize payload, ct)
+                    | _ ->
+                        match crops with
+                        | [] -> Inference.fail 503 "The crop helper returned no picture."
+                        | first :: _ ->
+                            context.Response.ContentType <- "image/png"
+                            context.Response.Headers.CacheControl <- "no-store"
+                            let payload = File.ReadAllBytes first.Path
+                            do! context.Response.Body.WriteAsync(ReadOnlyMemory payload, ct)
         } :> Task)) ctx

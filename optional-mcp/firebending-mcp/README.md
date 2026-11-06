@@ -24,14 +24,17 @@ user   "yes, but also the logo"
 agent  plan { request: "and the Nvidia logo" } -> the list refined from where it was
 user   "go"
 agent  plan { confirm: true, image: "/p/x.png" }
-       -> one line per object with its coordinates; the drawn picture only with show: true
+       -> one line per object with its coordinates, plus a Preview (yes/no) question
 agent  rerun {}                                 -> same questions again, fresh boxes, nothing redrawn
-agent  view {}                                  -> the picture with everything boxed (draws it if need be)
+agent  view {}                                  -> every box printed as text: t/b/l/r, confidence, presence
+agent  preview {}                               -> yes to that gate: those same boxes drawn, nothing remeasured
 agent  crop { object: "logo" }                 -> that thing alone, shown
 agent  getmouse {}                             -> pointer to each thing in pixels: 2: logo, -400i+50j
 agent  move { object: "logo" }                 -> the vector printed, nothing moved yet
 agent  move { object: "logo", confirm: true }  -> the overlay walks it; the pointer stands there
 agent  clickreturn { object: "logo" }          -> same walk, the other key: clicks, blinks back
+agent  plan { confirm: true, image: "/p/imgs" }
+       -> the same list asked of every picture in that folder: one section each, tally on top
 ```
 
 ```
@@ -48,10 +51,11 @@ agent  decide { confirm: true, states: [...] }          -> an expected level per
 
 | Tool              | What it does                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------- |
-| `plan`            | The list of things to look for: `request` drafts or refines, `confirm` + `image` looks, `count` sets how many of the list one picture check covers (1-8, most likely to be present first), `clear` starts over, nothing at all reports where things stand. |
-| `rerun`           | The same list asked of the same picture again - no rewrite, no new agreement - printed the usual way with fresh boxes and agreement. Nothing comes back unless `show: true`; one request per listed thing. `image` re-asks against a different picture. |
+| `plan`            | The list of things to look for: `request` drafts or refines, `confirm` + `image` looks, `count` sets how many of the list one picture check covers (1-8, most likely to be present first), `clear` starts over, nothing at all reports where things stand. `image` may be a **folder**, or `images` an explicit group of files and folders: the agreed list is then asked of every picture up to 24, one look each, sectioned per picture with a tally on top. |
+| `rerun`           | The same list asked of the same picture again - no rewrite, no new agreement - printed the usual way with fresh boxes and agreement. Nothing comes back unless `show: true`; one request per listed thing. `image` (or `images`) re-asks against a different picture, folder or group. |
 | `crop`            | Cut a region out. After a look, name the object by title or number; or pass `region` / up to eight `regions` and a fresh `image`. A cut-out the look already wrote is reused instead of redrawn. |
-| `view`            | The preview after a look: the picture with every found thing boxed, the same file `show: true` returns. No arguments previews the last look - drawing it if that pass didn't, and saying so; `path` shows another file, `path` with `object` or `region` cuts that part out and measures nothing. |
+| `view`            | The last look as the command line prints it: one line per thing with `t/b/l/r`, its `Confidence`, and `Presence` for a yes/no answer - never the pointer's own box. Measures and draws nothing, so it repeats exactly. `path` shows another file, `path` with `object` or `region` cuts that part out and measures nothing. |
+| `preview`         | The yes to a look's `Preview (yes/no)`: the picture with the boxes it already holds drawn on it, returned as an image. One drawing call, no model asked, so a preview cannot move a measurement. |
 | `getmouse`        | One fixed question, sent unchanged - where the box of coordinates is - about the picture the last look read. The pointer box is that plate translated by its layout margin (`-100i+50j`, `i` across and `j` upward, the frame the circle placer takes), the box keeping its four edges so the vectors stay centre-to-centre. Prints the vectors, the pointer and the tag it came from, nothing drawn: `1: Object, 30i+60j` (i across, j down). |
 | `move`            | The gated walk to a thing: the first call prints the vector `getmouse` measured and what it would do, touching nothing; `confirm: true` drives the overlay's circle placer in that order and leaves the pointer standing on the thing. The key goes in only once the placer answers with stage Confirm - pressed while it is still at Distance it lands in the distance field as text, which is what left a walk 40-56 px of a 400-563 px vector, against 1.4 px read first. `offset` aims by a vector you give, `origin` starts somewhere other than the live cursor. |
 | `clickreturn`     | The same gated walk ending on the click key: the click lands where the vector pointed and the pointer blinks back to where it started, so the trip leaves no trace. |
@@ -100,6 +104,7 @@ available without opening this README, and `uninstall` takes it back. A client r
 | `FIREBENDING_DAEMON_URL`  | `http://127.0.0.1:5199` | Where the picture daemon answers.                    |
 | `FIREBENDING_TIMEOUT_MS`  | `300000`                | How long one look may take.                          |
 | `FIREBENDING_MAX_IMAGES`  | `2`                     | Pictures attached to a reply; the rest stay on disk. |
+| `FIREBENDING_MAX_PICTURES`| `24`                    | Pictures one confirmed call covers, when `image` is a folder or `images` names a group. |
 | `FIREBENDING_SESSION`     | a random id             | Fix the daemon session across restarts of this MCP.  |
 | `MACROHELP_MCP_COMMAND`   | `macrohelpctl`          | How to start the overlay's own MCP, which the two walk tools drive. `install` copies it from the client's `macrohelp` entry so the two can never disagree. |
 | `MACROHELP_MCP_ARGS`      | `mcp`                   | Arguments for that command, space-separated.         |

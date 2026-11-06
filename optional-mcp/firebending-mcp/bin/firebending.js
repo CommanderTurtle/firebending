@@ -6,7 +6,7 @@
 // the picture itself rendered back as an image, and lossless sectioned reports for the long answers.
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
@@ -37,6 +37,10 @@ function envPositiveInt(name, fallback) {
 
 // A picture in a reply is worth a lot of context; the newest few are enough and the rest stay on disk.
 const MAX_IMAGES = envPositiveInt("FIREBENDING_MAX_IMAGES", 2);
+// One agreed list can be run over a folder of pictures in one call; a call stays inside one hold, so
+// the folder is taken in name order up to this many pictures and the rest are asked for again.
+const MAX_PICTURES = envPositiveInt("FIREBENDING_MAX_PICTURES", 24);
+const PICTURE_SUFFIXES = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"]);
 
 // The pointer probe, word for word. It is a contract with the vision model rather than a sentence to
 // reword per call, so it is written once here and sent unchanged - over the ordinary picture route,
@@ -126,6 +130,34 @@ function objectLine(object) {
     return `${object.index}. ${object.name} - ${at(object.presence * 100, 0)}% likely to be there, about the region where ${region}`;
   }
   return `${object.index}. ${object.name} - found at ${region}; weakest edge ${at(object.weakest_edge, 3)}, agreement ${at(object.confidence, 3)}`;
+}
+
+/// One picture, or every picture in a folder, in name order. Classifying a group of pictures is the
+/// obvious route for "does X appear in these", so a folder is accepted where a picture is asked for
+/// rather than making the caller list files by hand.
+function picturesOf(target, wanted) {
+  const entries = wanted?.length ? wanted : [target];
+  const found = [];
+  for (const entry of entries.filter(Boolean)) {
+    if (!existsSync(entry)) {
+      throw new Error(`There is nothing at ${JSON.stringify(entry)}: pass a picture file, a folder of them, or an absolute path.`);
+    }
+    if (statSync(entry).isDirectory()) {
+      const inside = readdirSync(entry)
+        .filter((name) => PICTURE_SUFFIXES.has(path.extname(name).toLowerCase()))
+        .sort()
+        .map((name) => path.join(entry, name));
+      if (!inside.length) {
+        throw new Error(`${JSON.stringify(entry)} holds no pictures: send a folder of ${[...PICTURE_SUFFIXES].join("/")} files, or name one file.`);
+      }
+      found.push(...inside);
+    } else {
+      found.push(entry);
+    }
+  }
+  const unique = [...new Set(found)];
+  if (!unique.length) throw new Error("No picture was named: pass image, or images with a list of files or folders.");
+  return { pictures: unique.slice(0, MAX_PICTURES), skipped: Math.max(0, unique.length - MAX_PICTURES) };
 }
 
 /// Pixel size straight out of a picture's header - a PNG's IHDR, a JPEG's start-of-frame. Fractions
@@ -279,7 +311,12 @@ function reportText(answer) {
   if (answer.annotated) {
     lines.push(`The picture with what was found drawn on it: ${answer.annotated.path} (${answer.annotated.width}x${answer.annotated.height})`);
   } else if (answer.picture?.path) {
-    lines.push(`The picture: ${answer.picture.path} - view it, or pass show to plan next time, to see the findings drawn over it.`);
+    lines.push(`The picture: ${answer.picture.path}`);
+    if (answer.answered > 0) {
+      // The gate is asked, not assumed: drawing costs one drawing call, and the boxes it paints are
+      // the ones already held, so a yes can never move a measurement.
+      lines.push(`Preview (yes/no): say yes and call preview - it draws these very boxes over ${answer.picture.path} without measuring anything again.`);
+    }
   }
   for (const crop of answer.crops || []) {
     lines.push(`Cut-out ${crop.name || ""}: ${crop.path} (${crop.width}x${crop.height})`);
@@ -440,7 +477,7 @@ export function buildServer() {
   const server = new McpServer({
     name: "firebending",
     version: VERSION,
-    instructions: "To look for something in a picture: call plan with the user's own words, show them the list it returns, then call plan again with confirm and the picture path once they agree. rerun asks that same list of that same picture again when an answer came back weak, with no rewrite. Afterwards view previews the picture with everything boxed, crop cuts a found thing out by name or number, and report_read opens the full text.",
+    instructions: "To look for something in a picture: call plan with the user's own words, show them the list it returns, then call plan again with confirm and the picture path once they agree. rerun asks that same list of that same picture again when an answer came back weak, with no rewrite. Afterwards view prints where every box came out, preview draws those same boxes without measuring again, crop cuts a found thing out by name or number, getmouse measures everything from the pointer, and report_read opens the full text.",
   });
 
   // What crop, getmouse and the walks work from afterwards. A preview draws without cutting anything
@@ -461,25 +498,33 @@ export function buildServer() {
       objects: answer.objects.map((object) => ({
         index: object.index,
         name: object.name,
+        kind: object.kind || null,
         box: object.box,
         presence: object.presence ?? null,
+        confidence: object.confidence ?? null,
+        weakest_edge: object.weakest_edge ?? null,
         error: object.error || null,
         crop: written.get(object.name) || carried.get(object.name) || null,
       })),
     };
   }
 
-  // One look, against whatever framework is agreed right now: "Y" re-activates it, the daemon reads the
-  // picture, and the answer replaces what crop, getmouse and the walks work from. plan { confirm } and
+  // One picture through whatever list is agreed right now: "Y" re-activates it, the daemon reads the
+  // picture, and the answer becomes what crop, getmouse and the walks work from. plan { confirm } and
   // rerun are the same machinery asked twice, so both come through here.
-  async function runLook(args, context) {
+  async function askOnce(image, args, context) {
     const started = await daemon.tell(session, "Y", context.signal);
-    const answer = JSON.parse((await daemon.look(session, args.image, {
+    const answer = JSON.parse((await daemon.look(session, image, {
       crop: args.cut_out ? 1 : 0,
       pad: args.pad,
       annotate: args.show ? 1 : 0,
     }, context.signal)).text());
-    applyLook(answer, args);
+    applyLook(answer, { image });
+    return { answer, started: started.text() };
+  }
+
+  async function runLook(args, context) {
+    const { answer, started } = await askOnce(args.image, args, context);
     const text = reportText(answer);
     const stored = store.put(createResource(text, {
       kind: "picture report",
@@ -498,17 +543,97 @@ export function buildServer() {
       annotated: answer.annotated,
       cut_outs: answer.crops,
       report_id: stored.id,
-      started: started.text(),
+      started,
     }, images);
+  }
+
+  // The same agreed list over a group of pictures, one look each, a tally on top: "does this appear in
+  // any of these" is one agreement, not one conversation per file. Only the last picture asked with the
+  // drawing on, so show: true attaches one picture and not twenty.
+  async function runBatch(pictures, skipped, args, context) {
+    const perPicture = [];
+    for (const [index, picture] of pictures.entries()) {
+      try {
+        const { answer } = await askOnce(picture, { ...args, show: index === pictures.length - 1 && args.show }, context);
+        perPicture.push({ picture, answer });
+      } catch (error) {
+        perPicture.push({ picture, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const tallies = new Map();
+    for (const entry of perPicture) {
+      if (entry.error) continue;
+      for (const object of entry.answer.objects) {
+        const tally = tallies.get(object.name) || { present: 0, absent: 0, located: 0, failed: 0 };
+        if (object.error) tally.failed += 1;
+        else if (typeof object.presence === "number") {
+          if (object.presence >= 0.5) tally.present += 1;
+          else tally.absent += 1;
+        } else tally.located += 1;
+        tallies.set(object.name, tally);
+      }
+    }
+    const lines = [`## ${pictures.length} pictures, each asked the same agreed list`, ""];
+    for (const entry of perPicture) {
+      lines.push(`## ${entry.picture}`, "");
+      if (entry.error) lines.push(`Not measured: ${entry.error}`, "");
+      else {
+        for (const object of entry.answer.objects) lines.push(objectLine(object));
+        lines.push("");
+      }
+    }
+    lines.push("## Tally", "");
+    for (const [name, tally] of tallies) {
+      const parts = [];
+      if (tally.present) parts.push(`there in ${tally.present}`);
+      if (tally.absent) parts.push(`not there in ${tally.absent}`);
+      if (tally.located) parts.push(`located in ${tally.located}`);
+      if (tally.failed) parts.push(`no answer in ${tally.failed}`);
+      lines.push(`${name}: ${parts.join(", ") || "nothing came back"}`);
+    }
+    if (skipped) lines.push("", `${skipped} further pictures in that group were left for another call; one call covers ${MAX_PICTURES}.`);
+    const text = lines.join("\n");
+    const stored = store.put(createResource(text, {
+      kind: "picture batch",
+      name: `Picture batch: ${pictures.length} pictures`,
+      tool: args.source,
+      metadata: { pictures: pictures.length, listed: tallies.size, failed: perPicture.filter((entry) => entry.error).length },
+    }));
+    const measured = perPicture.filter((entry) => !entry.error);
+    const newest = measured.at(-1);
+    return proseResult(
+      `${text}\n\nReport id: ${stored.id} - one section per picture, report_find locates a name across them. crop, view, preview and getmouse work on the newest picture measured${newest ? `: ${newest.picture}` : ""}.`,
+      {
+        ok: true,
+        pictures: pictures.length,
+        measured: measured.length,
+        failed: perPicture.length - measured.length,
+        skipped,
+        tally: Object.fromEntries(tallies),
+        per_picture: perPicture.map((entry) => ({ picture: entry.picture, error: entry.error || null, objects: entry.answer?.objects || [] })),
+        report_id: stored.id,
+      },
+      args.show && newest && last.annotated ? [last.annotated] : [],
+    );
+  }
+
+  // One picture or a whole group, decided by what was named: a folder is a group, so classifying a
+  // directory is one confirmed call rather than a loop the model has to write itself.
+  async function runNamed(args, context) {
+    const { pictures, skipped } = picturesOf(args.image, args.images);
+    const look = { ...args, image: pictures[0], source: args.source };
+    if (pictures.length === 1) return runLook(look, context);
+    return runBatch(pictures, skipped, look, context);
   }
 
   server.registerTool("plan", {
     title: "Agree on what to look for in a picture",
-    description: "One control point for the list of things to look for. request: describe the picture and what matters - the model answers with the list, and any further request refines the one before it. confirm: true with an image path starts looking and returns coordinates for each thing. count: 1-8 chooses how many of the list one look checks, most likely to be present first. clear: true drops the list and starts over. With none of these it reports where things stand. Nothing is measured until a human has seen the list: show it to the user, then confirm.",
+    description: "One control point for the list of things to look for. request: describe the picture and what matters - the model answers with the list, and any further request refines the one before it. confirm: true with an image path starts looking and returns coordinates for each thing. image may be a folder, or pass images with an explicit group: the same agreed list is then asked of every picture in it, one look per picture, each with its own section and a tally on top - that is the route for classifying a batch of files. count: 1-8 chooses how many of the list one look checks, most likely to be present first. clear: true drops the list and starts over. With none of these it reports where things stand. Nothing is measured until a human has seen the list: show it to the user, then confirm.",
     inputSchema: z.object({
       request: z.string().min(1).optional().describe("What to look for, in the user's words. Send it again after the user asks for a change and the list is refined from where it was."),
       confirm: z.boolean().optional().describe("True once the user has approved the list: this is when the picture is actually examined."),
-      image: z.string().min(1).optional().describe("Picture file the daemon should read, absolute path."),
+      image: z.string().min(1).optional().describe("Picture the daemon should read, absolute path. A folder works too: every picture in it is asked the same agreed list, one look each, with a tally on top."),
+      images: z.array(z.string().min(1)).min(1).max(24).optional().describe("An explicit group instead of one image: files and folders, mixed freely, each picture asked the same agreed list."),
       count: z.number().int().min(1).max(8).optional().describe("How many of the listed things one look checks, most likely first."),
       clear: z.boolean().optional().describe("Drop the list, its history and what is running."),
       cut_out: z.boolean().default(true).describe("With confirm: also cut each found thing out of the picture as its own file."),
@@ -534,8 +659,10 @@ export function buildServer() {
       return proseResult(cleared.text(), { ok: true, cleared: true });
     }
     if (args.confirm) {
-      if (!args.image) throw new Error("confirm needs the picture to look at: pass image with its file path.");
-      return runLook({ image: args.image, cut_out: args.cut_out, pad: args.pad, show: args.show, source: "plan" }, context);
+      if (!args.image && !args.images?.length) {
+        throw new Error("confirm needs something to look at: pass image with its file path or a folder of them, or images with an explicit group.");
+      }
+      return runNamed({ ...args, source: "plan" }, context);
     }
     const drafted = await daemon.tell(session, args.request, context.signal);
     const text = planText(drafted.text());
@@ -543,7 +670,7 @@ export function buildServer() {
       ok: true,
       confirm_required: true,
       list: text,
-      next: "Show this list to the user. Once they agree, call plan again with confirm: true and the image path; more text instead refines the list.",
+      next: "Show this list to the user. Once they agree, call plan again with confirm: true and image - one picture, or a folder of them, or images with an explicit group; more text instead refines the list.",
     });
   }));
 
@@ -552,19 +679,18 @@ export function buildServer() {
     description: "The rerun button: no rewrite and no new agreement - the list agreed last time is asked of the same picture once more, and the reply is the usual printed update, one line per thing with its coordinates and agreement. Nothing is drawn and no picture comes back unless show is passed, which is what makes it cheap to press. It costs what a look costs: one request per listed thing. Worth pressing when a thing came back missing or with a weak edge, because a second sample shows whether its box moves or holds. Whatever framework is agreed right now is what gets asked - after getmouse that is the pointer's own question. The answer replaces the last one, so crop, getmouse and the walks read the newest boxes, and count and clear still belong to plan.",
     inputSchema: z.object({
       show: z.boolean().default(false).describe("Draw the new findings over the picture and return it too, as confirm with show does."),
-      image: z.string().min(1).optional().describe("Ask again of this picture instead of the one the last look read."),
+      image: z.string().min(1).optional().describe("Ask again of this picture instead of the one the last look read. A folder asks the whole group, one look per picture."),
+      images: z.array(z.string().min(1)).min(1).max(24).optional().describe("Ask again of this explicit group of files and folders instead."),
     }),
     annotations: { openWorldHint: true },
   }, guarded(async (args, context) => {
-    const image = args.image || last?.picture;
-    if (!image) {
+    if (!args.image && !args.images?.length && !last?.picture) {
       throw new Error("Nothing has been looked at yet, so there is nothing to rerun: agree on a list with plan, then confirm it against a picture.");
     }
-    return runLook({
-      image,
+    return runNamed({
+      ...(args.image || args.images?.length ? args : { ...args, image: last.picture }),
       cut_out: last?.options?.cut_out ?? true,
       pad: last?.options?.pad ?? 0.05,
-      show: args.show,
       source: "rerun",
     }, context);
   }));
@@ -621,49 +747,38 @@ export function buildServer() {
   }));
 
   server.registerTool("view", {
-    title: "Preview the picture with the findings boxed",
-    description: "The preview after a look: the picture with every found thing boxed, the same marked-up file plan { confirm, show: true } returns. With no arguments it previews the last look - if that pass already drew the picture, its file is returned as it stands; if it did not, the agreed questions are asked once more with the drawing on, which is exactly what show: true would have paid for then, and the reply says which of the two happened. Re-asking means the model measured again, so boxes may have moved, and the newest answer is what crop, getmouse and the walks work from afterwards - the same swap rerun makes. Pass path to show some other file instead (a cut-out, a report's picture, anything the user named), or path with object / region to cut that part out and show only it, which measures nothing.",
+    title: "Print where everything came out",
+    description: "The last look printed the way the command line prints it: one line per thing - never the pointer's own box - with its coordinates, its confidence, and its presence when the question was yes/no. Nothing is measured and nothing is drawn, so it costs nothing and repeats exactly. The reply closes with what can still be done: rerun measures those boxes again, preview draws them. Pass path to show some other file instead (a cut-out, a report's picture, anything the user named), or path with object / region to cut that part out and show only it, which measures nothing.",
     inputSchema: z.object({
-      path: z.string().min(1).optional().describe("Show this picture instead of previewing the last look, absolute path."),
-      object: z.string().min(1).optional().describe("Cut out just this part: an object's title or number from the last look."),
+      path: z.string().min(1).optional().describe("Show or cut this picture instead of printing the last look, absolute path."),
+      object: z.string().min(1).optional().describe("With path: cut out just this part, an object's title or number from the last look."),
       region: z.object({ top: z.number().min(0), bottom: z.number().min(0), left: z.number().min(0), right: z.number().min(0) }).optional(),
       pad: z.number().min(0).max(1).default(0.05),
     }),
     annotations: { openWorldHint: true },
   }, guarded(async (args, context) => {
     if (!args.path) {
-      if (!last?.picture) {
-        throw new Error("Nothing has been looked at yet, so there is nothing to preview: agree on a list with plan, then confirm it against a picture.");
+      // The pointer's own answer is named "mouse" and belongs to getmouse; it is not part of the list.
+      const printed = (last?.objects || []).filter((object) => object.name !== "mouse");
+      if (!printed.length) {
+        throw new Error("Nothing has been looked for yet, so there is nothing to print: agree on a list with plan, then confirm it against a picture.");
       }
-      if (last.annotated) {
-        return proseResult(`Preview of the last look as it was drawn: ${last.annotated}`, {
-          ok: true,
-          preview: last.annotated,
-          redrawn: false,
-          objects: last.objects.length,
-        }, [last.annotated]);
-      }
-      // Nothing was drawn at confirm time, so drawing it now costs the measurement show: true would
-      // have paid then: one pass over the agreed list. Cut-outs stay where they are, so a crop asked
-      // afterwards still reuses the files already written.
-      const fresh = JSON.parse((await daemon.look(session, last.picture, { crop: 0, annotate: 1 }, context.signal)).text());
-      applyLook(fresh, { image: last.picture, cut_out: last.options?.cut_out ?? true, pad: last.options?.pad ?? 0.05 });
-      if (!last.annotated) {
-        throw new Error(`the daemon answered without a marked-up picture: ${fresh.objects?.[0]?.error || "no drawing came back"}`);
-      }
-      return proseResult(
-        `Preview: ${fresh.answered} of ${fresh.asked} things boxed on ${last.picture}. The questions were asked again to draw them, so these boxes may differ from the last printed ones.`,
-        {
-          ok: true,
-          preview: last.annotated,
-          redrawn: true,
-          asked: fresh.asked,
-          answered: fresh.answered,
-          failed: fresh.failed,
-          objects: fresh.objects,
-        },
-        [last.annotated],
-      );
+      const lines = printed.map((object) => {
+        if (object.error) return `${object.index}: ${object.name}, not found - ${object.error}`;
+        const region = EDGES.map((edge) => `${edge} ${at(object.box[edge])}`).join(", ");
+        const numbers = [];
+        if (typeof object.confidence === "number") numbers.push(`Confidence ${Math.round(object.confidence * 100)}%`);
+        if (typeof object.presence === "number") numbers.push(`Presence ${Math.round(object.presence * 100)}%`);
+        return `${object.index}: ${object.name}, ${region}${numbers.length ? ` - ${numbers.join(", ")}` : ""}`;
+      });
+      const size = last.dims?.width ? ` (${last.dims.width}x${last.dims.height})` : "";
+      lines.push("", `Picture: ${last.picture || "none named by the last look"}${size} - rerun measures these again, preview draws them.`);
+      return proseResult(lines.join("\n"), {
+        ok: true,
+        picture: last.picture || null,
+        printed: printed.length,
+        objects: printed,
+      });
     }
     const wanted = args.object ? resolveObject(args.object) : null;
     const region = args.region || (wanted ? { top: wanted.box.top, bottom: wanted.box.bottom, left: wanted.box.left, right: wanted.box.right } : null);
@@ -672,6 +787,32 @@ export function buildServer() {
     const report = JSON.parse((await daemon.cut(args.path, { format: "json", pad: args.pad, boxes: JSON.stringify(many) }, context.signal)).text());
     const crop = report.crops[0];
     return proseResult(`${args.path}, ${wanted?.name || "that region"}: ${crop.path} (${crop.width}x${crop.height})`, { ok: true, ...crop }, [crop.path]);
+  }));
+
+  server.registerTool("preview", {
+    title: "Say yes to the preview",
+    description: "The yes to a look's preview gate: the picture with every box from the last look drawn on it, returned as an image. Nothing is re-measured - the coordinates already held go straight to the drawing helper, so the boxes cannot move and the answer costs one drawing call, not a model request. It draws up to the 8 things the last look found, and never the pointer's own box.",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true },
+  }, guarded(async (args, context) => {
+    const found = (last?.objects || []).filter((object) => !object.error && object.box && object.name !== "mouse");
+    if (!found.length) {
+      throw new Error("Nothing has been measured yet, so there is nothing to draw: agree on a list with plan, then confirm it against a picture.");
+    }
+    if (!last.picture) throw new Error("The last look named no picture to draw on.");
+    const drawn = JSON.parse((await daemon.draw(last.picture, found.slice(0, 8).map((object) => ({ name: object.name, box: object.box })), context.signal)).text());
+    const art = drawn.annotated;
+    if (!art?.path) throw new Error("the drawing helper answered without a picture");
+    // The drawn file becomes what a later view or crop call points at, without touching the numbers.
+    last.annotated = art.path;
+    last.dims = { width: art.width, height: art.height };
+    return proseResult(`Drawn from the coordinates already held: ${art.path} (${art.width}x${art.height}) - ${found.length} box${found.length === 1 ? "" : "es"} painted, nothing measured again.`, {
+      ok: true,
+      preview: art.path,
+      width: art.width,
+      height: art.height,
+      drawn: found.length,
+    }, [art.path]);
   }));
 
   server.registerTool("getmouse", {
