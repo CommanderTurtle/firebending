@@ -275,16 +275,6 @@ module Bbox =
         | true, value when Double.IsFinite value && value >= 0.0 && value <= 1.0 -> value
         | _ -> 0.0
 
-    /// Magnification of a cut-out. The answer comes back as a fraction of the picture it was measured
-    /// over, so growing that picture cannot sharpen the arithmetic - what it can do is make a small mark
-    /// big enough for the model to place, rather than guess at.
-    let private scaleOf (query: string -> string) =
-        match Double.TryParse(query "scale") with
-        | true, value when Double.IsFinite value && value >= 1.0 && value <= 4.0 -> value
-        | _ -> 1.0
-
-    /// Every picture and box print lands in the data directory under a content hash, so a repeat ask
-    /// reuses the same file - and the NInfer picture cache keyed on that path.
     let private save name (bytes: byte[]) =
         Files.ensureDataDirectory()
         let path = Path.Combine(Files.dataDirectory, name)
@@ -318,12 +308,12 @@ module Bbox =
         with :? IOException -> ()
 
     /// One crop run: the helper writes the files and reports them, so no megabyte rides the pipe.
-    let private cut options (boxes: string) pad scale (bytes: byte[]) ct = task {
-        let material = boxes + $"|pad{pad:R}|scale{scale:R}"
+    let private cut options (boxes: string) pad (bytes: byte[]) ct = task {
+        let material = boxes + $"|pad{pad:R}"
         let key = (digest (Encoding.UTF8.GetBytes material)).[0..15]
         let! result =
             Perception.runImageHelper options
-                [ "--operation"; "crop"; "--boxes"; boxes; "--pad"; sprintf "%g" pad; "--scale"; sprintf "%g" scale
+                [ "--operation"; "crop"; "--boxes"; boxes; "--pad"; sprintf "%g" pad
                   "--out"; Path.Combine(Files.dataDirectory, $"bbox-{key}-crop") ] bytes ct
         prune 16 64
         return
@@ -440,7 +430,7 @@ module Bbox =
                 }
                 let! crops = task {
                     if Array.isEmpty found || not wantCrops then return []
-                    else return! cut options boxesText pad 1.0 bytes ct
+                    else return! cut options boxesText pad bytes ct
                 }
                 let base64 path = if inlineBytes then Some(File.ReadAllBytes path |> Convert.ToBase64String) else None
                 let answered, failed = found.Length, results.Length - found.Length
@@ -500,7 +490,7 @@ module Bbox =
         Inference.runUnlocked options stopping (fun ct context -> (task {
             let query key = string context.Request.Query.[key]
             if context.Request.Method = "GET" then
-                do! Formatting.write context 200 "POST a picture to /v1/bboxcrop with the box in the query: ?top=0.69&bottom=0.82&left=0.09&right=0.32 (a fraction 0-1 or a pixel count), or ?boxes=[{\"name\":\"cta\",\"box\":{\"top\":0.1,\"bottom\":0.4,\"left\":0.2,\"right\":0.8}}] for up to 8 at once. ?pad=0.05 widens each side by that fraction of itself; ?scale=2 magnifies the cut-out, which is how a small mark becomes big enough to place rather than guess at; format=png (default) returns the first crop, ?format=json writes every crop to a file and lists them.\n"
+                do! Formatting.write context 200 "POST a picture to /v1/bboxcrop with the box in the query: ?top=0.69&bottom=0.82&left=0.09&right=0.32 (a fraction 0-1 or a pixel count), or ?boxes=[{\"name\":\"cta\",\"box\":{\"top\":0.1,\"bottom\":0.4,\"left\":0.2,\"right\":0.8}}] for up to 8 at once. ?pad=0.05 widens each side by that fraction of itself; format=png (default) returns the first crop, ?format=json writes every crop to a file and lists them.\n"
             else
                 let format = if query "format" = "" then "png" else (query "format").ToLowerInvariant()
                 if not (List.contains format [ "png"; "json" ]) then Inference.fail 400 "format must be png or json."
@@ -559,9 +549,8 @@ module Bbox =
                 }
                 let! bytes = Inference.image ct context
                 let pad = padOf query
-                let scale = scaleOf query
                 let inlineBytes = query "inline" = "1"
-                let! crops = cut options (boxes.GetRawText()) pad scale bytes ct
+                let! crops = cut options (boxes.GetRawText()) pad bytes ct
                 match format with
                 | "json" ->
                     context.Response.ContentType <- "application/json; charset=utf-8"
@@ -569,7 +558,6 @@ module Bbox =
                     let payload =
                         {| cropped = crops.Length
                            pad = pad
-                           scale = scale
                            crops = List.map (cropOf inlineBytes) crops |}
                     do! context.Response.WriteAsync(Json.serialize payload, ct)
                 | _ ->

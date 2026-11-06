@@ -683,12 +683,10 @@ export function buildServer() {
       const window = pointerWindow(coarse.box, coarse.weakest_edge, width, height);
       const across = window.right - window.left;
       const down = window.bottom - window.top;
-      const native = [Math.round(across * width), Math.round(down * height)];
-      // Bigger, not finer: the answer comes back as a fraction of the picture it was measured over, so
-      // magnifying the window cannot sharpen that arithmetic - what it can do is make the mark itself
-      // large enough for the model to place instead of guessing. Nothing is drawn here, and the fraction
-      // maps back exactly as it did before.
-      const scale = Math.max(1, Math.min(4, Math.round(1400 / Math.max(native[0], native[1]))));
+      // The crop is handed over at its native size: the answer comes back as a fraction of the picture
+      // it was measured over, so every pixel of this window is already in the model's hands and
+      // resampling it could only blur it. What the window buys is a smaller frame - a hundredth of it
+      // is worth this many fewer of the original's pixels than a hundredth of the whole screen.
       const cut = JSON.parse((await daemon.cut(image, {
         name: "pointer",
         top: window.top,
@@ -696,16 +694,12 @@ export function buildServer() {
         left: window.left,
         right: window.right,
         pad: 0,
-        scale,
         format: "json",
       }, context.signal)).text());
       const crop = (cut.crops || [])[0];
       if (!crop?.path) {
         pointer.reason = "the crop came back empty";
-      } else if (
-        Math.abs(crop.width - native[0] * scale) > 2 * scale + 1 ||
-        Math.abs(crop.height - native[1] * scale) > 2 * scale + 1
-      ) {
+      } else if (Math.abs(crop.width - Math.round(across * width)) > 2 || Math.abs(crop.height - Math.round(down * height)) > 2) {
         // Scaling the answer back is only honest when the crop covers exactly the window asked for.
         pointer.reason = "the crop did not cover the window it was asked for";
       } else {
@@ -723,7 +717,6 @@ export function buildServer() {
           pointer.refined = true;
           pointer.window = window;
           pointer.crop = crop.path;
-          pointer.scale = scale;
           pointer.inside_crop = fine.box;
           pointer.touching = touchesEdge(fine.box);
         }

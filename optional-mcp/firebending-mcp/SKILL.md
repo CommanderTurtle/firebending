@@ -34,16 +34,15 @@ what it will measure.
    re-confirm your own list afterwards.
    Backing that reply are two inferences, and the driver sees neither of them separately. The first
    answer sizes a window out of its own weakest edge - the less sure it is, the wider the patch - crops
-   that patch out of the picture, magnifies it to about 1400 pixels across, and asks the second
-   question, "Where is center of the crosshair, or tip of the mouse, in this image?", about the crop
-   alone. Measuring over that patch is the finer measurement - a hundredth of a 865-pixel patch is 8.65
-   pixels of the original, where a hundredth of a 1780-pixel screen is 17.8 - and the magnification
-   serves the other half of the job: the answer is a fraction of whatever is shown, so growing the
-   picture cannot sharpen that arithmetic, only make a thin mark big enough to be placed rather than
-   guessed at. Either way the answer is scaled and shifted back into the picture and that box becomes
-   the pointer. The crop is temporary. The structured answer keeps both passes: `passes`, `refined`,
-   the window, the crop file, the `scale` it was grown by, the box as the crop reported it, and which
-   edge of the crop it pressed against.
+   that patch out of the picture at its native size, and asks the second question, "Where is center of
+   the crosshair, or tip of the mouse, in this image?", about the crop alone. Measuring over that patch
+   is the finer measurement, because the answer is a fraction of the picture it was measured over: a
+   hundredth of a 865-pixel patch is 8.65 pixels of the original, where a hundredth of a 1780-pixel
+   screen is 17.8. Nothing is resampled on the way - every pixel of the window is already there, and
+   blowing it up would only blur it. The answer is scaled and shifted back into the picture and that box
+   becomes the pointer. The crop is temporary. The structured answer keeps both passes: `passes`,
+   `refined`, the window, the crop file, the box as the crop reported it, and which edge of the crop it
+   pressed against.
    What that is worth was measured, over four probes of a screenshot whose crosshair was then found
    pixel by pixel: when the second look returns an extent (`t 0.51, b 0.91` - it saw a tall mark), the
    pointer lands about half as far off; when it returns a point in the dead middle of the crop
@@ -51,11 +50,11 @@ what it will measure.
    the answer worse, and a point in the middle of the crop with `weakest_edge` near zero is the tell
    that the pointer is only as good as the first guess. Across that same image the sideways answer
    tightened from 954 px to 970 px against a measured 970.5 px, because the first pass had quantized
-   that axis to two decimals and the crop let it be measured again. Growing that crop further was
-   measured as well - three passes at ×2, patches of 1516 to 1764 px cut from windows of 758 to 882 px:
-   `0.51` in the middle every time, `(968.8, 381.5)`, `(970.0, 382.0)`, `(969.9, 385.5)`, still 139 to
-   143 px from the mark, the same place the un-magnified crop gave. More pixels sharpen an answer the
-   model can see; they cannot move one it is reading out of the patch's own centre.
+   that axis to two decimals and the crop let it be measured again. Magnifying that patch beyond its
+   native size was tried and measured too - three passes at ×2, patches of 1516 to 1764 px cut from the
+   same windows: `0.51` in the middle every time, `(968.8, 381.5)`, `(970.0, 382.0)`, `(969.9, 385.5)`,
+   139 to 143 px out, exactly where the native crop left it. The answer is a fraction of the picture it
+   was shown, so resampling cannot add information; the patch goes over as cut.
 6. `move { object: "2" }` and `clickreturn { object: "2" }` carry that printed vector to the Macrohelp
    overlay through the overlay's own MCP: open its circle placer, feed the vector, press one key at
    the end. `move` leaves the pointer standing on the thing; `clickreturn` clicks it and blinks the

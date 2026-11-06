@@ -18,7 +18,7 @@ loads a model at daemon startup, on a health check, or while idle.
 | `GET /v1/bboxset` | Optional `?session=name` | Draft, active list, how many entries one picture check covers, turn count; no inference |
 | `POST /v1/bboxask` | One image: bytes, a path, or a data URL | One native request per list entry, the picture with findings drawn on it, optional cut-outs |
 | `GET /v1/bboxask` | Optional `?session=name` | What the next picture would be asked for; no inference |
-| `POST /v1/bboxcrop` | One image plus `?top=&bottom=&left=&right=` or `?boxes=`, optionally `?pad=`, `?scale=` | Cut-out bytes, or a JSON list of written files; no plan, no model |
+| `POST /v1/bboxcrop` | One image plus `?top=&bottom=&left=&right=` or `?boxes=`, optionally `?pad=` | Cut-out bytes at their native size, or a JSON list of written files; no plan, no model |
 | `GET /v1/bboxcrop` | No body | How to call it; no process started |
 
 ## Setup
@@ -188,12 +188,10 @@ draw or a cut.
 | `?annotate=0` | Skip the drawing; `annotated` is null |
 | `?inline=1` | Add `image_base64` to `annotated` and to every crop; without it only paths come back, so bytes never enter a conversation unasked |
 
-`/v1/bboxcrop` needs no plan, no model and no lane: coordinates in, bytes out (or a JSON list of
-written files with `?format=json`, up to 8 at once). It heals the same slips in `?boxes=` and
-otherwise names the field and shows what was found. `?pad=` widens each side by that fraction of
-itself; `?scale=` magnifies the cut-out (1-4), which is how a thin mark becomes big enough for the
-model to place rather than guess at - the answer stays a fraction of what it was shown, so this is
-seeing, not arithmetic - a PIL resize, no model, no measurement.
+`/v1/bboxcrop` needs no plan, no model and no lane: coordinates in, bytes out at their native size (or
+a JSON list of written files with `?format=json`, up to 8 at once). It heals the same slips in
+`?boxes=` and otherwise names the field and shows what was found. `?pad=` widens each side by that
+fraction of itself. Nothing is resampled: the cut-out carries exactly the pixels that were there.
 
 `optional-mcp/firebending-mcp` exposes these routes as an MCP under plain tool names (`plan`,
 `crop`, `view`, plus sectioned report readers), prints what was found as text - that list is the
