@@ -39,6 +39,13 @@ the `systemone-judge` skill.
    `show: true` is passed.
 3. `crop { object: "nvidia logo" }` or `crop { object: "2" }` cuts a found thing out again with no
    second model call; `view { path: "..." }` shows any file, or one region of it.
+4. `rerun {}` is the rerun button: the same list asked of the same picture again - no rewrite, no new
+   agreement - printed exactly as the look was, one line per thing with its box and agreement. Nothing
+   is drawn and no picture comes back unless `show: true`, which is what makes it cheap to press. It
+   costs one request per entry, so press it when a thing came back missing or with a weak edge and
+   watch whether the box holds or moves. Whatever is agreed right now is what gets asked - after
+   `getmouse` that is the pointer's own question - and the newest answer is what `crop`, `getmouse` and
+   the walks read afterwards.
 
 An entry the model refuses to locate gets its own "not found" line and no coordinates, while the
 others still answer.
@@ -90,6 +97,7 @@ holds, or an expected score with the level named in the model's own words.
 | ----------------------------------------------- | ----------------------------------------- |
 | find or mark things in a picture                | `plan`, then confirm with the image       |
 | cut a found thing out again, by name or number  | `crop`                                    |
+| the same questions again, to see if a box holds | `rerun`                                   |
 | how far is each thing from the pointer, in px   | `getmouse` (after a look)                 |
 | put the pointer on the thing, or click it       | `move` / `clickreturn`                    |
 | show a picture file, or one region of it        | `view`                                    |

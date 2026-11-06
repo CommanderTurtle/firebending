@@ -42,6 +42,15 @@
   confidence, its left and right edges within 8 px of the real tag - a box of text in the right column,
   about 135 px too high. Both numbers are in the guide, so a driver reads the confidence and the `t ==
   b` tell rather than trusting the score.
+- Added the rerun button the pipeline was missing: `rerun {}` asks the agreed list of the same picture
+  again, with no rewrite and nothing to re-approve, and prints the same per-thing update with fresh
+  boxes and agreement. It does not reshow the picture - `show: true` asks for that - and it costs what
+  a look costs, one request per entry. Worth having because it turns a weak answer into a measurement:
+  measured on the same screenshot, three asks held `t 0.08, b 0.54, l 0.80` while the right edge moved
+  1.00 to 0.91 and agreement wandered 0.244-0.260, which is the difference between a stable box and a
+  guessed one, and it was not visible from a single look. Whatever framework is agreed right now is what
+  gets asked, and the newest answer replaces the old, so `crop`, `getmouse` and the walks all read it.
+  `plan { confirm }` and `rerun` now run through one look function rather than two copies of it.
 - Put the overlay's plate layout into the arithmetic rather than into any picture: the coordinate plate
   is drawn at a fixed margin below and right of the cursor whose numbers it prints, so the pointer box is
   that plate *translated* by its layout margin, `-100i+50j` - `i` across, `j` upward, the frame the circle

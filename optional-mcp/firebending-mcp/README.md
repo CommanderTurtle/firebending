@@ -25,6 +25,7 @@ agent  plan { request: "and the Nvidia logo" } -> the list refined from where it
 user   "go"
 agent  plan { confirm: true, image: "/p/x.png" }
        -> one line per object with its coordinates; the drawn picture only with show: true
+agent  rerun {}                                 -> same questions again, fresh boxes, nothing redrawn
 agent  crop { object: "logo" }                 -> that thing alone, shown
 agent  getmouse {}                             -> pointer to each thing in pixels: 2: logo, -400i+50j
 agent  move { object: "logo" }                 -> pointer stands there, via the overlay's own MCP
@@ -46,6 +47,7 @@ agent  decide { confirm: true, states: [...] }          -> an expected level per
 | Tool              | What it does                                                                        |
 | ----------------- | ----------------------------------------------------------------------------------- |
 | `plan`            | The list of things to look for: `request` drafts or refines, `confirm` + `image` looks, `count` sets how many of the list one picture check covers (1-8, most likely to be present first), `clear` starts over, nothing at all reports where things stand. |
+| `rerun`           | The same list asked of the same picture again - no rewrite, no new agreement - printed the usual way with fresh boxes and agreement. Nothing comes back unless `show: true`; one request per listed thing. `image` re-asks against a different picture. |
 | `crop`            | Cut a region out. After a look, name the object by title or number; or pass `region` / up to eight `regions` and a fresh `image`. A cut-out the look already wrote is reused instead of redrawn. |
 | `view`            | Show a picture file, or just a region of it.                                          |
 | `getmouse`        | One fixed question, sent unchanged - where the box of coordinates is - about the picture the last look read. The pointer box is that plate translated by its layout margin (`-100i+50j`, `i` across and `j` upward, the frame the circle placer takes), the box keeping its four edges so the vectors stay centre-to-centre. Prints the vectors, the pointer and the tag it came from, nothing drawn: `1: Object, 30i+60j` (i across, j down). |

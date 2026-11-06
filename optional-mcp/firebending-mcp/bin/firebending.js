@@ -440,8 +440,59 @@ export function buildServer() {
   const server = new McpServer({
     name: "firebending",
     version: VERSION,
-    instructions: "To look for something in a picture: call plan with the user's own words, show them the list it returns, then call plan again with confirm and the picture path once they agree. Afterwards crop and view work by object name or number, and report_read opens the full text.",
+    instructions: "To look for something in a picture: call plan with the user's own words, show them the list it returns, then call plan again with confirm and the picture path once they agree. rerun asks that same list of that same picture again when an answer came back weak, with no rewrite. Afterwards crop and view work by object name or number, and report_read opens the full text.",
   });
+
+  // One look, against whatever framework is agreed right now: "Y" re-activates it, the daemon reads the
+  // picture, and the answer replaces what crop, getmouse and the walks work from. plan { confirm } and
+  // rerun are the same machinery asked twice, so both come through here.
+  async function runLook(args, context) {
+    const started = await daemon.tell(session, "Y", context.signal);
+    const answer = JSON.parse((await daemon.look(session, args.image, {
+      crop: args.cut_out ? 1 : 0,
+      pad: args.pad,
+      annotate: args.show ? 1 : 0,
+    }, context.signal)).text());
+    last = {
+      picture: answer.picture?.path || args.image,
+      annotated: answer.annotated?.path || null,
+      // Kept so a rerun cuts out and pads exactly as the look it repeats did.
+      options: { cut_out: args.cut_out, pad: args.pad },
+      // The pixel size the coordinates turn into. The drawn picture keeps the source's own size; when
+      // the drawing was skipped the header of the source answers it instead.
+      dims: answer.annotated
+        ? { width: answer.annotated.width, height: answer.annotated.height }
+        : headerSize(answer.picture?.path || args.image) || { width: null, height: null },
+      objects: answer.objects.map((object) => ({
+        index: object.index,
+        name: object.name,
+        box: object.box,
+        presence: object.presence ?? null,
+        error: object.error || null,
+        crop: (answer.crops || []).find((file) => file.name === object.name)?.path || null,
+      })),
+    };
+    const text = reportText(answer);
+    const stored = store.put(createResource(text, {
+      kind: "picture report",
+      name: `Picture look: ${answer.answered} of ${answer.asked}`,
+      tool: args.source,
+      metadata: { picture: last.picture, objects: answer.objects.length, answered: answer.answered, failed: answer.failed },
+    }));
+    const images = args.show && answer.annotated?.path ? [answer.annotated.path] : [];
+    return proseResult(`${text}\n\nReport id: ${stored.id} - report_read opens it by section; crop cuts any object out again by name or number.`, {
+      ok: true,
+      asked: answer.asked,
+      answered: answer.answered,
+      failed: answer.failed,
+      objects: answer.objects,
+      picture: answer.picture,
+      annotated: answer.annotated,
+      cut_outs: answer.crops,
+      report_id: stored.id,
+      started: started.text(),
+    }, images);
+  }
 
   server.registerTool("plan", {
     title: "Agree on what to look for in a picture",
@@ -476,49 +527,7 @@ export function buildServer() {
     }
     if (args.confirm) {
       if (!args.image) throw new Error("confirm needs the picture to look at: pass image with its file path.");
-      const started = await daemon.tell(session, "Y", context.signal);
-      const answer = JSON.parse((await daemon.look(session, args.image, {
-        crop: args.cut_out ? 1 : 0,
-        pad: args.pad,
-        annotate: args.show ? 1 : 0,
-      }, context.signal)).text());
-      last = {
-        picture: answer.picture?.path || args.image,
-        annotated: answer.annotated?.path || null,
-        // The pixel size the coordinates turn into. The drawn picture keeps the source's own size; when
-        // the drawing was skipped the header of the source answers it instead.
-        dims: answer.annotated
-          ? { width: answer.annotated.width, height: answer.annotated.height }
-          : headerSize(answer.picture?.path || args.image) || { width: null, height: null },
-        objects: answer.objects.map((object) => ({
-          index: object.index,
-          name: object.name,
-          box: object.box,
-          presence: object.presence ?? null,
-          error: object.error || null,
-          crop: (answer.crops || []).find((file) => file.name === object.name)?.path || null,
-        })),
-      };
-      const text = reportText(answer);
-      const stored = store.put(createResource(text, {
-        kind: "picture report",
-        name: `Picture look: ${answer.answered} of ${answer.asked}`,
-        tool: "plan",
-        metadata: { picture: last.picture, objects: answer.objects.length, answered: answer.answered, failed: answer.failed },
-      }));
-      const images = args.show && answer.annotated?.path ? [answer.annotated.path] : [];
-      return proseResult(`${text}\n\nReport id: ${stored.id} - report_read opens it by section; crop cuts any object out again by name or number.`, {
-        ok: true,
-        asked: answer.asked,
-        answered: answer.answered,
-        failed: answer.failed,
-        objects: answer.objects,
-        picture: answer.picture,
-        annotated: answer.annotated,
-        cut_outs: answer.crops,
-        report_id: stored.id,
-        started: started.text(),
-      }, images);
+      return runLook({ image: args.image, cut_out: args.cut_out, pad: args.pad, show: args.show, source: "plan" }, context);
     }
     const drafted = await daemon.tell(session, args.request, context.signal);
     const text = planText(drafted.text());
@@ -528,6 +537,28 @@ export function buildServer() {
       list: text,
       next: "Show this list to the user. Once they agree, call plan again with confirm: true and the image path; more text instead refines the list.",
     });
+  }));
+
+  server.registerTool("rerun", {
+    title: "Ask the same questions of the same picture again",
+    description: "The rerun button: no rewrite and no new agreement - the list agreed last time is asked of the same picture once more, and the reply is the usual printed update, one line per thing with its coordinates and agreement. Nothing is drawn and no picture comes back unless show is passed, which is what makes it cheap to press. It costs what a look costs: one request per listed thing. Worth pressing when a thing came back missing or with a weak edge, because a second sample shows whether its box moves or holds. Whatever framework is agreed right now is what gets asked - after getmouse that is the pointer's own question. The answer replaces the last one, so crop, getmouse and the walks read the newest boxes, and count and clear still belong to plan.",
+    inputSchema: z.object({
+      show: z.boolean().default(false).describe("Draw the new findings over the picture and return it too, as confirm with show does."),
+      image: z.string().min(1).optional().describe("Ask again of this picture instead of the one the last look read."),
+    }),
+    annotations: { openWorldHint: true },
+  }, guarded(async (args, context) => {
+    const image = args.image || last?.picture;
+    if (!image) {
+      throw new Error("Nothing has been looked at yet, so there is nothing to rerun: agree on a list with plan, then confirm it against a picture.");
+    }
+    return runLook({
+      image,
+      cut_out: last?.options?.cut_out ?? true,
+      pad: last?.options?.pad ?? 0.05,
+      show: args.show,
+      source: "rerun",
+    }, context);
   }));
 
   server.registerTool("crop", {
