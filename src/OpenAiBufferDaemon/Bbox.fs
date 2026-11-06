@@ -276,8 +276,8 @@ module Bbox =
         | _ -> 0.0
 
     /// Magnification of a cut-out. The answer comes back as a fraction of the picture it was measured
-    /// over, so growing the picture by this much makes every decimal of that fraction worth this many
-    /// times fewer pixels of the original - the same ground, counted more finely.
+    /// over, so growing that picture cannot sharpen the arithmetic - what it can do is make a small mark
+    /// big enough for the model to place, rather than guess at.
     let private scaleOf (query: string -> string) =
         match Double.TryParse(query "scale") with
         | true, value when Double.IsFinite value && value >= 1.0 && value <= 4.0 -> value
@@ -486,7 +486,7 @@ module Bbox =
         Inference.runUnlocked options stopping (fun ct context -> (task {
             let query key = string context.Request.Query.[key]
             if context.Request.Method = "GET" then
-                do! Formatting.write context 200 "POST a picture to /v1/bboxcrop with the box in the query: ?top=0.69&bottom=0.82&left=0.09&right=0.32 (a fraction 0-1 or a pixel count), or ?boxes=[{\"name\":\"cta\",\"box\":{\"top\":0.1,\"bottom\":0.4,\"left\":0.2,\"right\":0.8}}] for up to 8 at once. ?pad=0.05 widens each side by that fraction of itself; ?scale=2 magnifies the cut-out, so a coordinate measured over it is worth twice as many of them; format=png (default) returns the first crop, ?format=json writes every crop to a file and lists them.\n"
+                do! Formatting.write context 200 "POST a picture to /v1/bboxcrop with the box in the query: ?top=0.69&bottom=0.82&left=0.09&right=0.32 (a fraction 0-1 or a pixel count), or ?boxes=[{\"name\":\"cta\",\"box\":{\"top\":0.1,\"bottom\":0.4,\"left\":0.2,\"right\":0.8}}] for up to 8 at once. ?pad=0.05 widens each side by that fraction of itself; ?scale=2 magnifies the cut-out, which is how a small mark becomes big enough to place rather than guess at; format=png (default) returns the first crop, ?format=json writes every crop to a file and lists them.\n"
             else
                 let format = if query "format" = "" then "png" else (query "format").ToLowerInvariant()
                 if not (List.contains format [ "png"; "json" ]) then Inference.fail 400 "format must be png or json."

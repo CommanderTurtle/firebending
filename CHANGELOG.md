@@ -40,12 +40,14 @@
   reply carries the crop's own box so the difference is visible.
 - Magnified that patch. `/v1/bboxcrop` grew `?scale=` (1-4, a resize in the same helper call that
   already cut it - no model, no measurement at the endpoint), and the probe now grows its second window
-  to about 1400 px across, so each decimal of the answer is worth that many times fewer pixels of the
-  original. Measured on the same screenshot at ×2 - patches of 1516 to 1764 px cut from windows of 758
-  to 882 px - the answer stayed at the patch's own centre every time, `(968.8, 381.5)`, `(970.0, 382.0)`,
-  `(969.9, 385.5)`, 139 to 143 px from the mark, where the un-magnified crop had left it: more pixels
-  sharpen what the model can see and cannot move what it reads out of the middle, which is what
-  `inside_crop` is there to expose.
+  to about 1400 px across. The answer is a fraction of whatever it is shown, so the magnification
+  cannot sharpen the arithmetic - that sharpening came from the window being small, a hundredth of it
+  worth 8.65 px against 17.8 px of the whole screen - it can only make a thin mark big enough to place
+  rather than guess at. Measured on the same screenshot at ×2 - patches of 1516 to 1764 px cut from
+  windows of 758 to 882 px - the answer stayed at the patch's own centre every time, `(968.8, 381.5)`,
+  `(970.0, 382.0)`, `(969.9, 385.5)`, 139 to 143 px from the mark, where the un-magnified crop had left
+  it: more pixels sharpen what the model can see and cannot move what it reads out of the middle, which
+  is what `inside_crop` is there to expose.
 - Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
   picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
   labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is

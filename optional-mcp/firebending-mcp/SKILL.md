@@ -34,12 +34,14 @@ what it will measure.
    answer sizes a window out of its own weakest edge - the less sure it is, the wider the patch - crops
    that patch out of the picture, magnifies it to about 1400 pixels across, and asks the second
    question, "Where is center of the crosshair, or tip of the mouse, in this image?", about the crop
-   alone. A coordinate measured over a magnified patch is finer than the same coordinate measured over
-   a screen - each decimal of the answer is worth four times fewer of the original's pixels at ×4 - so
-   the answer is scaled and shifted back into the picture and that box becomes the pointer. The crop is
-   temporary. The structured answer keeps both passes: `passes`, `refined`, the window, the crop file,
-   the `scale` it was grown by, the box as the crop reported it, and which edge of the crop it pressed
-   against.
+   alone. Measuring over that patch is the finer measurement - a hundredth of a 865-pixel patch is 8.65
+   pixels of the original, where a hundredth of a 1780-pixel screen is 17.8 - and the magnification
+   serves the other half of the job: the answer is a fraction of whatever is shown, so growing the
+   picture cannot sharpen that arithmetic, only make a thin mark big enough to be placed rather than
+   guessed at. Either way the answer is scaled and shifted back into the picture and that box becomes
+   the pointer. The crop is temporary. The structured answer keeps both passes: `passes`, `refined`,
+   the window, the crop file, the `scale` it was grown by, the box as the crop reported it, and which
+   edge of the crop it pressed against.
    What that is worth was measured, over four probes of a screenshot whose crosshair was then found
    pixel by pixel: when the second look returns an extent (`t 0.51, b 0.91` - it saw a tall mark), the
    pointer lands about half as far off; when it returns a point in the dead middle of the crop

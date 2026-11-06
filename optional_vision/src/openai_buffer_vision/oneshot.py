@@ -105,9 +105,10 @@ def main() -> int:
                         for item in objects:
                             cut = crop(image, item["box"], args.pad)
                             if args.scale > 1.0:
-                                # More pixels over the same ground: the answer comes back as a fraction of
-                                # this picture, so every decimal is worth proportionally fewer pixels of the
-                                # original. Nothing is drawn and nothing is inferred here.
+                                # The answer is a fraction of whatever the model is shown, so growing this
+                                # picture cannot sharpen the arithmetic - it can only make the thing itself
+                                # big enough to be placed rather than guessed at. Nothing is drawn and
+                                # nothing is inferred here.
                                 cut = cut.resize(
                                     (max(1, round(cut.width * args.scale)), max(1, round(cut.height * args.scale))),
                                     Image.LANCZOS,

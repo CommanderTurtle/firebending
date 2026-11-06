@@ -191,8 +191,9 @@ draw or a cut.
 `/v1/bboxcrop` needs no plan, no model and no lane: coordinates in, bytes out (or a JSON list of
 written files with `?format=json`, up to 8 at once). It heals the same slips in `?boxes=` and
 otherwise names the field and shows what was found. `?pad=` widens each side by that fraction of
-itself; `?scale=` magnifies the cut-out (1-4), which is how a coordinate measured over it comes back
-worth that many times fewer pixels of the original - a PIL resize, no model, no measurement.
+itself; `?scale=` magnifies the cut-out (1-4), which is how a thin mark becomes big enough for the
+model to place rather than guess at - the answer stays a fraction of what it was shown, so this is
+seeing, not arithmetic - a PIL resize, no model, no measurement.
 
 `optional-mcp/firebending-mcp` exposes these routes as an MCP under plain tool names (`plan`,
 `crop`, `view`, plus sectioned report readers), renders the drawn picture back as an image so the

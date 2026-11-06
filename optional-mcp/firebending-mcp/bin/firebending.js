@@ -533,10 +533,10 @@ export function buildServer() {
       const across = window.right - window.left;
       const down = window.bottom - window.top;
       const native = [Math.round(across * width), Math.round(down * height)];
-      // More pixels over the same ground. The answer comes back as a fraction of the picture it was
-      // measured over, so measuring it over a magnified crop rather than the whole screen makes every
-      // decimal of it worth this many times fewer of the original's pixels. Nothing is drawn, and the
-      // fraction maps back exactly as it did before.
+      // Bigger, not finer: the answer comes back as a fraction of the picture it was measured over, so
+      // magnifying the window cannot sharpen that arithmetic - what it can do is make the mark itself
+      // large enough for the model to place instead of guessing. Nothing is drawn here, and the fraction
+      // maps back exactly as it did before.
       const scale = Math.max(1, Math.min(4, Math.round(1400 / Math.max(native[0], native[1]))));
       const cut = JSON.parse((await daemon.cut(image, {
         name: "pointer",
