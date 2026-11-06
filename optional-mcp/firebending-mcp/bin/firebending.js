@@ -143,6 +143,129 @@ function resolveObject(wanted) {
   return found;
 }
 
+/// The daemon wraps JSON replies in a fence; take the last block, which is the payload.
+function jsonFrom(text) {
+  const blocks = [...String(text).matchAll(/```json\s*([\s\S]*?)```/g)].map((block) => block[1]);
+  const candidate = (blocks.at(-1) || text || "").trim();
+  if (!candidate.startsWith("{") && !candidate.startsWith("[")) return null;
+  try { return JSON.parse(candidate); } catch { return null; }
+}
+
+/// The framework the daemon holds, read back rather than scraped out of prose. Right after a draft
+/// the fresh questions are the draft, not whatever is still active from an earlier agreement.
+async function frameworkOf(context, prefer = "active") {
+  const status = jsonFrom((await daemon.judgeStatus(session, context.signal)).text()) || {};
+  const framework = (prefer === "draft" ? status.draft || status.active : status.active || status.draft) || null;
+  const entries = Object.entries(framework?.questions || {});
+  return { framework, entries, levels: new Map(entries), turns: status.turns ?? 0 };
+}
+
+/// Agree to the draft. A 409 here always means the same thing, so say what to do about it.
+async function activateJev(context, hint) {
+  try {
+    await daemon.tellJev(session, "Y", context.signal);
+  } catch (error) {
+    if (error instanceof DaemonError && error.status === 409) error.fix = hint;
+    throw error;
+  }
+}
+
+/// What the questions will ask, in the words a person chooses from.
+function questionLines(entries) {
+  return entries.map(([id, question], index) => {
+    if (question.type === "choice") {
+      const labels = Object.keys(question.criteria || {});
+      return `${index + 1}. ${id} - pick exactly one of: ${labels.join(", ")}`;
+    }
+    if (question.type === "score") {
+      const levels = Array.isArray(question.criteria) ? question.criteria : [];
+      const named = levels.every((level) => typeof level === "string") ? ` (${levels.join(", ")})` : "";
+      return `${index + 1}. ${id} - rate on ${levels.length} ordered levels${named}`;
+    }
+    if (question.type === "noul") {
+      const trueSide = question.criteria?.true || "the proposition holds";
+      return `${index + 1}. ${id} - yes or no: how likely is it that ${trueSide}?`;
+    }
+    if (question.type === "box") return `${index + 1}. ${id} - where in the picture`;
+    return `${index + 1}. ${id} - ${question.type}`;
+  });
+}
+
+function answersOf(result) {
+  if (result && (result.error || result.status)) {
+    return [{ error: result.error || `the model did not answer (status ${result.status})`, status: result.status }];
+  }
+  const answers = result?.answers ?? result ?? {};
+  const entries = Object.entries(answers);
+  if (!entries.length) return [{ error: "the answer had nothing in it" }];
+  return entries.map(([id, answer]) => {
+    if (!answer || typeof answer !== "object") return { id, error: "the answer had nothing in it" };
+    const spread = answer.probabilities && typeof answer.probabilities === "object" ? answer.probabilities : null;
+    const top = spread ? Object.entries(spread).sort((a, b) => b[1] - a[1])[0] : null;
+    if (answer.type === "noul") return { id, kind: "noul", p_true: answer.noul };
+    if (answer.type === "choice") {
+      return {
+        id,
+        kind: "choice",
+        label: answer.choice,
+        probability: spread?.[answer.choice] ?? answer.probability,
+        confidence: answer.confidence,
+        spread,
+      };
+    }
+    if (answer.type === "score") {
+      return { id, kind: "score", mean: answer.score, modal: top?.[0], confidence: answer.confidence, levels: spread };
+    }
+    if (answer.type === "box") {
+      return { id, kind: "box", box: answer.box, aggregate: answer.aggregate, confidence: answer.confidence };
+    }
+    return { id, kind: answer.type || "unknown", raw: answer };
+  });
+}
+
+function answerLine(entry, levels = new Map()) {
+  if (entry.error) return `could not decide: ${entry.error}`;
+  if (entry.kind === "noul") return `P(true) ${at(entry.p_true, 4)}`;
+  if (entry.kind === "choice") return `${entry.label} - ${at((entry.probability ?? 0) * 100, 1)}% of the distribution (agreement ${at(entry.confidence, 3)})`;
+  if (entry.kind === "score") {
+    // The distribution is keyed 0..n-1, while a model often writes its own 1-based labels inside the
+    // level text. Quote the level in the model's own words, with the axis stated once, so a line
+    // never reads "level 4: 5: Total outage".
+    const question = levels.get(entry.id);
+    const criteria = Array.isArray(question?.criteria) ? question.criteria : [];
+    const axis = Math.max(0, criteria.length - 1);
+    const raw = typeof criteria[Number(entry.modal)] === "string" ? criteria[Number(entry.modal)].trim() : null;
+    const stripped = raw ? raw.replace(/^\s*\d+\s*[:.\-–)\]]\s*/, "").trim() : "";
+    const named = stripped.length > 2 ? stripped : null;
+    const scale = `expected ${at(entry.mean, 2)} on a 0-${axis} scale`;
+    return named
+      ? `"${named}" (${scale}, agreement ${at(entry.confidence, 3)})`
+      : `${scale}, modal level ${entry.modal} (agreement ${at(entry.confidence, 3)})`;
+  }
+  if (entry.kind === "box") return `top ${at(entry.box?.top)} bottom ${at(entry.box?.bottom)} left ${at(entry.box?.left)} right ${at(entry.box?.right)} as ${entry.aggregate}`;
+  return JSON.stringify(entry.raw ?? entry);
+}
+
+function stateLabel(state, index) {
+  if (typeof state === "string") return state.length > 90 ? `${state.slice(0, 90)}…` : state;
+  const text = JSON.stringify(state);
+  return text.length > 90 ? `${text.slice(0, 90)}…` : text;
+}
+
+function judgedText(rows, answered, total) {
+  const lines = [`## Judged ${answered} of ${total}`, ""];
+  for (const row of rows) lines.push(`${row.index + 1}. ${row.state}${row.answers.length === 1 ? ` - ${row.answers[0].line}` : ""}`);
+  if (rows.some((row) => row.answers.length > 1)) {
+    lines.push("");
+    for (const row of rows) {
+      for (const answer of row.answers) lines.push(`   ${row.index + 1}.${answer.id || ""}: ${answer.line}`);
+    }
+  }
+  lines.push("");
+  lines.push("Probabilities and agreement describe how the model spread its own belief, not how correct it is.");
+  return lines.join("\n");
+}
+
 export function buildServer() {
   const server = new McpServer({
     name: "firebending",
@@ -302,9 +425,157 @@ export function buildServer() {
     return proseResult(`${args.path}, ${wanted?.name || "that region"}: ${crop.path} (${crop.width}x${crop.height})`, { ok: true, ...crop }, [crop.path]);
   }));
 
+  /// Ask the agreed framework about 1-N states, chunked under the daemon's 32-state / 256-decision
+  /// ceiling. A state that cannot be decided is a row of its own; it never loses the states that
+  /// answered, and a chunk whose whole request failed keeps the daemon's own reason.
+  async function judgeStates(states, entries, context) {
+    const per = Math.min(32, Math.max(1, Math.floor(256 / Math.max(1, entries.length))));
+    const levels = new Map(entries);
+    const rows = [];
+    let answered = 0;
+    for (let start = 0; start < states.length; start += per) {
+      const chunk = states.slice(start, start + per);
+      const batch = chunk.length > 1;
+      let results;
+      try {
+        const parsed = jsonFrom((await daemon.judge(session, batch ? chunk : chunk[0], { batch }, context.signal)).text());
+        results = batch ? (parsed?.results || []) : [{ state: chunk[0], result: parsed }];
+      } catch (error) {
+        results = chunk.map((state) => ({ state, result: { error: error.message } }));
+      }
+      if (!results.length) results = chunk.map((state) => ({ state, result: { error: "the judge returned nothing" } }));
+      for (const item of results) {
+        const answers = answersOf(item.result).map((answer) => ({ ...answer, line: answerLine(answer, levels) }));
+        if (!(answers.length === 1 && answers[0].error)) answered += 1;
+        rows.push({
+          index: rows.length,
+          state: stateLabel(item.state ?? chunk[0], rows.length),
+          answers,
+        });
+      }
+    }
+    return { rows, answered, per };
+  }
+
+  server.registerTool("decide", {
+    title: "Agree how to judge things, then judge them",
+    description: "The text decision pipeline, in one control point. request: say the task in the user's words (label a set of things, rate severity, answer a yes/no about each item) and the questions it intends to ask come back for the user to approve; more text refines them. confirm: true judges what you send - one `state`, or `states` as an array of up to 32 items, each judged on its own and reported on its own line. clear: true drops the agreed questions. With no arguments it says where things stand. Nothing is decided until a human has read the questions, so show them first.",
+    inputSchema: z.object({
+      request: z.string().min(1).optional().describe("The judging task, in the user's words. Send it again after the user changes their mind and the questions are refined from where they were."),
+      confirm: z.boolean().optional().describe("True once the user has approved the questions."),
+      state: z.unknown().optional().describe("One thing to judge: a sentence, or a JSON object/array/null about it."),
+      states: z.array(z.unknown()).min(1).max(32).optional().describe("Up to 32 things to judge in one call; each is still judged on its own."),
+      clear: z.boolean().optional().describe("Drop the agreed questions and start over."),
+    }),
+    annotations: { openWorldHint: true },
+  }, guarded(async (args, context) => {
+    if ([args.request, args.confirm, args.clear].some((value) => value !== undefined && value !== false)) {
+      if (args.clear) {
+        const cleared = await daemon.tellJev(session, "N", context.signal);
+        return proseResult(cleared.text(), { ok: true, cleared: true });
+      }
+      if (args.confirm) {
+        const states = args.states ?? (args.state === undefined ? [] : [args.state]);
+        if (!states.length) throw new Error("confirm needs something to judge: pass state (one thing) or states (up to 32).");
+        await activateJev(context, "No questions are agreed yet: send request first, show the user what comes back, then confirm.");
+        const { entries } = await frameworkOf(context);
+        if (!entries.length) throw new Error("There are no agreed questions to ask: send a request first and show it to the user.");
+        const { rows, answered, per } = await judgeStates(states, entries, context);
+        const text = judgedText(rows, answered, states.length);
+        const stored = store.put(createResource(text, {
+          kind: "decision report",
+          name: `Judged ${answered} of ${states.length}`,
+          tool: "decide",
+          metadata: { questions: entries.map(([id]) => id), batch_width: per },
+        }));
+        return proseResult(`${text}\n\nReport id: ${stored.id} - report_read opens it by section.`, {
+          ok: true,
+          judged: states.length,
+          answered,
+          failed: states.length - answered,
+          questions: entries.map(([id, question]) => ({ id, type: question.type })),
+          results: rows,
+          report_id: stored.id,
+        });
+      }
+      await daemon.tellJev(session, args.request, context.signal);
+      const drafted = await frameworkOf(context, "draft");
+      const questions = questionLines(drafted.entries);
+      return proseResult(`What it will ask each thing:\n${questions.join("\n")}`, {
+        ok: true,
+        confirm_required: true,
+        questions,
+        next: "Show these questions to the user. Once they agree, call decide again with confirm: true and the state or states to judge; more text instead refines the questions.",
+      });
+    }
+    const { entries, turns } = await frameworkOf(context);
+    if (!entries.length) {
+      return proseResult("No questions are agreed yet. Say what to judge with request, show the user the questions that come back, then confirm.", { ok: true, agreed: false });
+    }
+    const list = questionLines(entries);
+    return proseResult(`Agreed questions:\n${list.join("\n")}`, { ok: true, agreed: true, questions: list, turns });
+  }));
+
+  server.registerTool("categorize", {
+    title: "Label a long list with one agreed set of labels",
+    description: "Large categorization: send the items and the labels. The first call drafts the one labelling question it intends to ask and shows it back; with confirm: true it judges every item and returns one line per item plus a tally. Items are short strings or JSON objects. Calls are chunked automatically (never more than 32 items, or 256 decisions, in one request), and an item it cannot decide is a line of its own without losing the rest. Up to 512 items per call.",
+    inputSchema: z.object({
+      items: z.array(z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())])).min(1).max(512).describe("The things to label, one per entry."),
+      labels: z.array(z.string().min(1)).min(1).max(60).describe("The labels to choose from; each item gets exactly one."),
+      note: z.string().min(1).optional().describe("Anything that helps tell the labels apart, in the user's words."),
+      confirm: z.boolean().optional().describe("True once the user has approved the labelling question."),
+    }),
+    annotations: { openWorldHint: true },
+  }, guarded(async (args, context) => {
+    const task = [
+      `Label each item with exactly one of these: ${args.labels.join(", ")}.`,
+      args.note ? `How to tell them apart: ${args.note}.` : "Choose the label that fits best; if none truly fits, pick the closest one and say how sure you are.",
+      "Each item arrives as its own state; the state is the item, nothing else.",
+    ].join(" ");
+    if (!args.confirm) {
+      await daemon.tellJev(session, task, context.signal);
+      const { entries } = await frameworkOf(context, "draft");
+      const list = questionLines(entries);
+      return proseResult(`The labelling question for ${args.items.length} items:\n${list.join("\n")}`, {
+        ok: true,
+        confirm_required: true,
+        items: args.items.length,
+        labels: args.labels,
+        questions: list,
+        next: "Show this to the user. With their agreement, call categorize again with confirm: true and the same items and labels.",
+      });
+    }
+    await activateJev(context, "Nothing to agree to yet: call categorize without confirm first, show the user the labelling question, then confirm.");
+    const { entries } = await frameworkOf(context);
+    if (!entries.length) throw new Error("No labelling question was agreed: call categorize without confirm first and show it to the user.");
+    const { rows, answered, per } = await judgeStates(args.items, entries, context);
+    const tally = new Map();
+    for (const row of rows) {
+      const chosen = row.answers.find((answer) => answer.kind === "choice");
+      if (chosen?.label) tally.set(chosen.label, (tally.get(chosen.label) || 0) + 1);
+    }
+    const text = `${judgedText(rows, answered, args.items.length)}\n\nTally: ${[...tally].map(([label, count]) => `${label} ${count}`).join(", ") || "no labels chosen"}`;
+    const stored = store.put(createResource(text, {
+      kind: "categorization",
+      name: `Labelled ${answered} of ${args.items.length}`,
+      tool: "categorize",
+      metadata: { labels: args.labels, tally: Object.fromEntries(tally), batch_width: per },
+    }));
+    return proseResult(`${text}\n\nReport id: ${stored.id} - report_read opens it by section.`, {
+      ok: true,
+      items: args.items.length,
+      answered,
+      failed: args.items.length - answered,
+      labels: args.labels,
+      tally: Object.fromEntries(tally),
+      results: rows,
+      report_id: stored.id,
+    });
+  }));
+
   server.registerTool("report_read", {
-    title: "Read part of a picture report",
-    description: "Open sections of a stored report by number - the whole text of a look, with every coordinate and file path. Omit id for the most recent one.",
+    title: "Read part of a stored report",
+    description: "Open sections of a stored report by number - the whole text of a look or a judged list, with every coordinate, label and file path. Omit id for the most recent one.",
     inputSchema: z.object({
       id: z.string().min(1).optional(),
       sections: z.array(z.number().int().min(1)).min(1).describe("One-based section numbers from the report index."),
@@ -316,8 +587,8 @@ export function buildServer() {
   }));
 
   server.registerTool("report_find", {
-    title: "Search a picture report",
-    description: "Find the sections of a stored report that mention something - an object name, a coordinate, a file - and return short excerpts with section numbers.",
+    title: "Search a stored report",
+    description: "Find the sections of a stored report that mention something - an object name, a label, a coordinate, a file - and return short excerpts with section numbers.",
     inputSchema: z.object({
       id: z.string().min(1).optional(),
       query: z.string().min(1),

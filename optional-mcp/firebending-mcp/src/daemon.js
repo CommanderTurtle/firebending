@@ -75,4 +75,24 @@ export class Daemon {
   cut(image, options = {}, signal) {
     return this.request("/v1/bboxcrop", { query: options, body: image, type: "text/plain; charset=utf-8", signal });
   }
+
+  /// One message to the decision framework: a task, a refinement, "Y" to agree, or "N" to drop it.
+  tellJev(session, message, signal) {
+    return this.request("/v1/jevset", { query: { session }, body: message, type: "text/plain; charset=utf-8", signal });
+  }
+
+  judgeStatus(session, signal) {
+    return this.request("/v1/jevset", { method: "GET", query: { session }, signal });
+  }
+
+  /// One state through the agreed framework; 1-32 of them travel together with `batch`.
+  judge(session, state, { batch = false, format = "json" } = {}, signal) {
+    const asJson = batch || typeof state !== "string";
+    return this.request("/v1/jevask", {
+      query: { session, batch: batch ? 1 : "", format },
+      body: asJson ? JSON.stringify(state) : state,
+      type: asJson ? "application/json" : "text/plain; charset=utf-8",
+      signal,
+    });
+  }
 }

@@ -1,18 +1,19 @@
 # firebending
 
-Look for named things in a picture, then cut them out and show them.
+Look for named things in a picture, and judge long lists of things - with a human agreeing to the
+question first, either way.
 
-This is the MCP half of firebending. The daemon (`src/OpenAiBufferDaemon`) measures things — it asks
-a vision model where each named object is and answers with coordinates — and answers in prose written
-for a person. This process adds what a conversation needs:
+This is the MCP half of firebending. The daemon (`src/OpenAiBufferDaemon`) does the measuring and
+answers in prose written for a person. This process adds what a conversation needs:
 
-- one control point for agreeing on what to look for before anything is measured;
-- cut-outs and marked-up pictures returned as actual images, so the client renders them;
+- one control point for agreeing on what to measure before anything is measured;
+- pictures rendered back as images, so the client shows them instead of describing them;
 - a remembered answer, so the next sentence can be "crop the llama logo" or "crop 2";
-- lossless sectioned reports, so a long answer costs an index and not a wall of text.
+- lossless sectioned reports, so a long answer costs an index and not a wall of text;
+- the same two-step agreement for text: label a list of 4 or 500 things with one agreed question.
 
 Nothing here knows what a bounding box is. Neither does the model: it is asked what the user wants to
-find, and gets numbers back.
+find, or how a list should be judged, and gets numbers back.
 
 ## Flow
 
@@ -27,6 +28,16 @@ agent  plan { confirm: true, image: "/p/x.png" }
 agent  crop { object: "logo" }                 -> that thing alone, shown
 ```
 
+```
+user   "sort these support messages into bug, feature request, praise, question, billing"
+agent  categorize { items: [...], labels: [...] }        -> the one labelling question, nothing judged
+user   "yes, and treat double charges as billing"
+agent  categorize { items, labels, note: "double charges count as billing", confirm: true }
+       -> one line per item, a tally, and a report id for the full text
+agent  decide { request: "rate severity, 1 cosmetic to 5 outage" } -> a different question set
+agent  decide { confirm: true, states: [...] }          -> an expected level per item
+```
+
 ## Tools
 
 | Tool              | What it does                                                                        |
@@ -34,6 +45,8 @@ agent  crop { object: "logo" }                 -> that thing alone, shown
 | `plan`            | The list of things to look for: `request` drafts or refines, `confirm` + `image` looks, `count` sets how many of the list one picture check covers (1-8, most likely to be present first), `clear` starts over, nothing at all reports where things stand. |
 | `crop`            | Cut a region out. After a look, name the object by title or number; or pass `region` / up to eight `regions` and a fresh `image`. A cut-out the look already wrote is reused instead of redrawn. |
 | `view`            | Show a picture file, or just a region of it.                                          |
+| `decide`          | One control point for judging things by text: `request` drafts or refines the questions, `confirm` + `state` / `states` (up to 32) judges them, `clear` starts over, nothing at all reports the current questions. |
+| `categorize`      | The short route for labelling a list: `items` + `labels` drafts one labelling question, `confirm` labels every item (up to 512 per call, batched automatically) and returns a tally. |
 | `report_read`     | Open sections of a stored report by number.                                           |
 | `report_find`     | Which sections mention a name, a coordinate, a file — with excerpts.                  |
 | `report_outline`  | A report's sections: heading, size, the picture files each one names.                  |
@@ -66,7 +79,9 @@ bun scripts/configure.mjs uninstall --target omp        # removes only this entr
 ```
 
 `--daemon-url <url>` points the registered entry at a daemon on another port; `--dry-run` prints the
-change without touching anything. A client restart loads the tools.
+change without touching anything. `install` also puts `SKILL.md` in the client's skill directory
+(`~/.omp/agent/skills/firebending/SKILL.md`) so the plain-language guide for both pipelines is
+available without opening this README, and `uninstall` takes it back. A client restart loads the tools.
 
 ## Environment
 

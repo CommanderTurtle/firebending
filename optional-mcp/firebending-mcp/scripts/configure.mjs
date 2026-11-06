@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -96,6 +96,8 @@ function readJson(file, fallback = {}) {
 const TARGETS = {
   omp: {
     file: path.join(ompHome, "mcp.json"),
+    // The plain-language guide for both pipelines, where the client reads skills from.
+    skill: { source: path.join(REPO_ROOT, "SKILL.md"), file: path.join(ompHome, "skills", "firebending", "SKILL.md") },
   },
 };
 
@@ -112,11 +114,13 @@ function serverDefinition() {
   };
 }
 
-function describe(target, file) {
-  const document = readJson(file, {});
+function describe(target) {
+  const chosen = TARGETS[target];
+  const document = readJson(chosen.file, {});
   const entry = document.mcpServers?.[SERVER_NAME];
-  if (!entry) return `${target}: not registered in ${file}`;
-  return `${target}: ${entry.command} ${entry.args?.join(" ")} (cwd ${entry.cwd}) in ${file}`;
+  const skill = chosen.skill && existsSync(chosen.skill.file) ? ` + skill ${chosen.skill.file}` : "";
+  if (!entry) return `${target}: not registered in ${chosen.file}`;
+  return `${target}: ${entry.command} ${entry.args?.join(" ")} (cwd ${entry.cwd}) in ${chosen.file}${skill}`;
 }
 
 function apply(target) {
@@ -124,12 +128,17 @@ function apply(target) {
   if (!profile) throw new Error(`Unknown target ${JSON.stringify(target)}; try: ${Object.keys(TARGETS).join(", ")}`);
   const file = profile.file;
   if (options.action === "status") {
-    process.stdout.write(`${describe(target, file)}\n`);
+    process.stdout.write(`${describe(target)}\n`);
     return;
   }
   const document = readJson(file, {});
   document.mcpServers = document.mcpServers ?? {};
   if (options.action === "uninstall") {
+    // Only take back the skill file if it is still ours.
+    if (profile.skill && existsSync(profile.skill.file) && readFileSync(profile.skill.file, "utf8").includes("name: firebending")) {
+      log(`remove ${profile.skill.file}`);
+      if (!options.dryRun) rmSync(profile.skill.file);
+    }
     if (!document.mcpServers[SERVER_NAME]) {
       log(`${SERVER_NAME} is not in ${file}`);
       return;
@@ -141,7 +150,10 @@ function apply(target) {
   if (!existsSync(serverEntry)) throw new Error(`The server entry is missing: ${serverEntry}`);
   document.mcpServers[SERVER_NAME] = serverDefinition();
   atomicWrite(file, JSON.stringify(document, null, 2));
-  if (!options.dryRun) log("restart the client to load the tools; MCP has to be enabled in its settings");
+  if (profile.skill && existsSync(profile.skill.source)) {
+    atomicWrite(profile.skill.file, readFileSync(profile.skill.source, "utf8"), 0o644);
+  }
+  if (!options.dryRun) log("restart the client to load the tools and the skill; MCP has to be enabled in its settings");
 }
 
 if (options.action !== "status" && !options.dryRun) ensureDirectory(path.dirname(backupRoot));

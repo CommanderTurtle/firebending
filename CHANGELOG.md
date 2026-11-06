@@ -23,6 +23,12 @@
 - Added `optional-mcp/firebending-mcp`: `plan`, `crop`, `view` and sectioned report readers over
   those routes, returning the drawn picture as an MCP image and letting a cut-out be asked for by an
   entry's title or number; verified end to end over stdio against a live daemon.
+- Added `decide` and `categorize` to that MCP, so the text pipeline is reachable the same way the
+  picture one is: agree on the questions first, then judge one state or up to 32 at a time, with
+  labelling runs chunked under the 32-state / 256-decision ceiling and a tally on top. A score is
+  quoted in the level's own words with the axis stated, because the distribution is keyed from zero
+  while a model labels its levels from one. `SKILL.md` documents both pipelines in plain language and
+  `configure.mjs` installs it beside the server entry.
 
 - Added Markdown message, standalone format, one-use file path, multichat,
   delimiter, and check endpoints, with private request/reply lookup.
