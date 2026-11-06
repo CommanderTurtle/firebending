@@ -440,19 +440,14 @@ export function buildServer() {
   const server = new McpServer({
     name: "firebending",
     version: VERSION,
-    instructions: "To look for something in a picture: call plan with the user's own words, show them the list it returns, then call plan again with confirm and the picture path once they agree. rerun asks that same list of that same picture again when an answer came back weak, with no rewrite. Afterwards crop and view work by object name or number, and report_read opens the full text.",
+    instructions: "To look for something in a picture: call plan with the user's own words, show them the list it returns, then call plan again with confirm and the picture path once they agree. rerun asks that same list of that same picture again when an answer came back weak, with no rewrite. Afterwards view previews the picture with everything boxed, crop cuts a found thing out by name or number, and report_read opens the full text.",
   });
 
-  // One look, against whatever framework is agreed right now: "Y" re-activates it, the daemon reads the
-  // picture, and the answer replaces what crop, getmouse and the walks work from. plan { confirm } and
-  // rerun are the same machinery asked twice, so both come through here.
-  async function runLook(args, context) {
-    const started = await daemon.tell(session, "Y", context.signal);
-    const answer = JSON.parse((await daemon.look(session, args.image, {
-      crop: args.cut_out ? 1 : 0,
-      pad: args.pad,
-      annotate: args.show ? 1 : 0,
-    }, context.signal)).text());
+  // What crop, getmouse and the walks work from afterwards. A preview draws without cutting anything
+  // out, so cut-outs already written on an earlier pass keep their names rather than going null.
+  function applyLook(answer, args) {
+    const carried = new Map((last?.objects || []).filter((object) => object.crop).map((object) => [object.name, object.crop]));
+    const written = new Map((answer.crops || []).map((file) => [file.name, file.path]));
     last = {
       picture: answer.picture?.path || args.image,
       annotated: answer.annotated?.path || null,
@@ -469,9 +464,22 @@ export function buildServer() {
         box: object.box,
         presence: object.presence ?? null,
         error: object.error || null,
-        crop: (answer.crops || []).find((file) => file.name === object.name)?.path || null,
+        crop: written.get(object.name) || carried.get(object.name) || null,
       })),
     };
+  }
+
+  // One look, against whatever framework is agreed right now: "Y" re-activates it, the daemon reads the
+  // picture, and the answer replaces what crop, getmouse and the walks work from. plan { confirm } and
+  // rerun are the same machinery asked twice, so both come through here.
+  async function runLook(args, context) {
+    const started = await daemon.tell(session, "Y", context.signal);
+    const answer = JSON.parse((await daemon.look(session, args.image, {
+      crop: args.cut_out ? 1 : 0,
+      pad: args.pad,
+      annotate: args.show ? 1 : 0,
+    }, context.signal)).text());
+    applyLook(answer, args);
     const text = reportText(answer);
     const stored = store.put(createResource(text, {
       kind: "picture report",
@@ -613,16 +621,50 @@ export function buildServer() {
   }));
 
   server.registerTool("view", {
-    title: "Show a picture file",
-    description: "Return a picture file so it can be seen: the whole file, or just a region of it. Use it for the picture a look marked up, for a cut-out from a list, or for anything on disk the user mentions.",
+    title: "Preview the picture with the findings boxed",
+    description: "The preview after a look: the picture with every found thing boxed, the same marked-up file plan { confirm, show: true } returns. With no arguments it previews the last look - if that pass already drew the picture, its file is returned as it stands; if it did not, the agreed questions are asked once more with the drawing on, which is exactly what show: true would have paid for then, and the reply says which of the two happened. Re-asking means the model measured again, so boxes may have moved, and the newest answer is what crop, getmouse and the walks work from afterwards - the same swap rerun makes. Pass path to show some other file instead (a cut-out, a report's picture, anything the user named), or path with object / region to cut that part out and show only it, which measures nothing.",
     inputSchema: z.object({
-      path: z.string().min(1).describe("Picture file, absolute path."),
+      path: z.string().min(1).optional().describe("Show this picture instead of previewing the last look, absolute path."),
       object: z.string().min(1).optional().describe("Cut out just this part: an object's title or number from the last look."),
       region: z.object({ top: z.number().min(0), bottom: z.number().min(0), left: z.number().min(0), right: z.number().min(0) }).optional(),
       pad: z.number().min(0).max(1).default(0.05),
     }),
-    annotations: { readOnlyHint: true },
+    annotations: { openWorldHint: true },
   }, guarded(async (args, context) => {
+    if (!args.path) {
+      if (!last?.picture) {
+        throw new Error("Nothing has been looked at yet, so there is nothing to preview: agree on a list with plan, then confirm it against a picture.");
+      }
+      if (last.annotated) {
+        return proseResult(`Preview of the last look as it was drawn: ${last.annotated}`, {
+          ok: true,
+          preview: last.annotated,
+          redrawn: false,
+          objects: last.objects.length,
+        }, [last.annotated]);
+      }
+      // Nothing was drawn at confirm time, so drawing it now costs the measurement show: true would
+      // have paid then: one pass over the agreed list. Cut-outs stay where they are, so a crop asked
+      // afterwards still reuses the files already written.
+      const fresh = JSON.parse((await daemon.look(session, last.picture, { crop: 0, annotate: 1 }, context.signal)).text());
+      applyLook(fresh, { image: last.picture, cut_out: last.options?.cut_out ?? true, pad: last.options?.pad ?? 0.05 });
+      if (!last.annotated) {
+        throw new Error(`the daemon answered without a marked-up picture: ${fresh.objects?.[0]?.error || "no drawing came back"}`);
+      }
+      return proseResult(
+        `Preview: ${fresh.answered} of ${fresh.asked} things boxed on ${last.picture}. The questions were asked again to draw them, so these boxes may differ from the last printed ones.`,
+        {
+          ok: true,
+          preview: last.annotated,
+          redrawn: true,
+          asked: fresh.asked,
+          answered: fresh.answered,
+          failed: fresh.failed,
+          objects: fresh.objects,
+        },
+        [last.annotated],
+      );
+    }
     const wanted = args.object ? resolveObject(args.object) : null;
     const region = args.region || (wanted ? { top: wanted.box.top, bottom: wanted.box.bottom, left: wanted.box.left, right: wanted.box.right } : null);
     if (!region) return proseResult(`${args.path}`, { ok: true, path: args.path }, [args.path]);

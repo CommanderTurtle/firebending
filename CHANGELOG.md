@@ -42,6 +42,17 @@
   confidence, its left and right edges within 8 px of the real tag - a box of text in the right column,
   about 135 px too high. Both numbers are in the guide, so a driver reads the confidence and the `t ==
   b` tell rather than trusting the score.
+- Made `view` the preview it was named for instead of a path viewer with an ambitious name. It came in
+  the first firebending-mcp commit as "show a picture file", and after the look's picture became opt-in
+  the only way to see the boxed version through it was already having that path - which exists only when
+  `show: true` drew it. Now `view {}` previews the last look: the file as drawn if the pass drew it
+  (`redrawn: false`, free), or one more pass with the drawing on if it did not (`redrawn: true`, exactly
+  what `show: true` would have paid for then, said out loud because the boxes can move). `path`, `object`
+  and `region` keep their old meaning and still measure nothing. Verified: a look that skipped the
+  drawing returned no image and no annotated file, the first `view {}` returned the drawn picture with
+  `redrawn: true`, the second returned the same file with `redrawn: false`, `crop` still found its
+  cut-out afterwards, `view { path }` and `view { path, object }` still showed a file and a region, and
+  `rerun` still worked after all of it.
 - Added the rerun button the pipeline was missing: `rerun {}` asks the agreed list of the same picture
   again, with no rewrite and nothing to re-approve, and prints the same per-thing update with fresh
   boxes and agreement. It does not reshow the picture - `show: true` asks for that - and it costs what

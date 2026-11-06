@@ -37,9 +37,14 @@ the `systemone-judge` skill.
    weakest edge and agreement. Coordinates are fractions of the picture: `0.00` is its top-left
    corner, `1.00` its bottom-right. Nothing is drawn over the picture and no image comes back unless
    `show: true` is passed.
-3. `crop { object: "nvidia logo" }` or `crop { object: "2" }` cuts a found thing out again with no
-   second model call; `view { path: "..." }` shows any file, or one region of it.
-4. `rerun {}` is the rerun button: the same list asked of the same picture again - no rewrite, no new
+3. `view {}` is the preview: the picture with every found thing boxed - the same marked-up file
+   `show: true` returns. If that pass drew it, the file is shown as it stands; if it did not, the agreed
+   questions are asked once more with the drawing on, which is what `show: true` would have paid for
+   then. The reply says which happened, and a re-ask can move the boxes. `view { path }` shows another
+   file, `view { path, object: "2" }` cuts a part of it out - that route measures nothing.
+4. `crop { object: "nvidia logo" }` or `crop { object: "2" }` cuts a found thing out again with no
+   second model call.
+5. `rerun {}` is the rerun button: the same list asked of the same picture again - no rewrite, no new
    agreement - printed exactly as the look was, one line per thing with its box and agreement. Nothing
    is drawn and no picture comes back unless `show: true`, which is what makes it cheap to press. It
    costs one request per entry, so press it when a thing came back missing or with a weak edge and
@@ -96,6 +101,7 @@ holds, or an expected score with the level named in the model's own words.
 | The ask                                         | Tool                                      |
 | ----------------------------------------------- | ----------------------------------------- |
 | find or mark things in a picture                | `plan`, then confirm with the image       |
+| see the picture with everything boxed           | `view` (no arguments)                     |
 | cut a found thing out again, by name or number  | `crop`                                    |
 | the same questions again, to see if a box holds | `rerun`                                   |
 | how far is each thing from the pointer, in px   | `getmouse` (after a look)                 |
